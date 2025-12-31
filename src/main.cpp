@@ -91,11 +91,17 @@ void setup() {
 
   startTime = millis();
 
+  // POWER SAVING: Reduce CPU frequency to 80 MHz (minimum for WiFi operation)
+  // This reduces power consumption by ~30-40% while maintaining WiFi functionality
+  // 160 MHz → 80 MHz saves approximately 20-30 mA
+  setCpuFrequencyMhz(80);
+  Serial.println("\n✓ CPU Frequency reduced to 80 MHz for power saving");
+
   // Setup LED pin
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);  // Start with LED off
 
-  Serial.println("\n\n=================================");
+  Serial.println("\n=================================");
   Serial.println("ESP32-C3 Super Mini - Monitor");
   Serial.println("=================================");
   Serial.print("Chip Model: ");
@@ -243,6 +249,13 @@ void setupAccessPoint() {
   WiFi.setTxPower(WIFI_POWER_8_5dBm);
   Serial.println("✓ WiFi TX Power set to 8.5dBm (ESP32-C3 hardware limitation)");
 
+  // POWER SAVING: Enable WiFi Modem Sleep Mode
+  // This allows the WiFi radio to sleep between DTIM beacons while maintaining connection
+  // Reduces power consumption by ~60-75% (80 mA → 15-25 mA)
+  // Web server remains accessible with minimal latency increase (~50-100ms)
+  WiFi.setSleep(true);  // Enable WIFI_PS_MIN_MODEM
+  Serial.println("✓ WiFi Modem Sleep enabled for power saving");
+
   // Configure AP IP address (192.168.4.1)
   IPAddress local_IP(192, 168, 4, 1);
   IPAddress gateway(192, 168, 4, 1);
@@ -383,6 +396,9 @@ void connectToWiFi() {
   // Set TX power after WiFi.begin() for station mode
   WiFi.setTxPower(WIFI_POWER_8_5dBm);
 
+  // POWER SAVING: Enable WiFi Modem Sleep for station mode
+  WiFi.setSleep(true);
+
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 20) {
     delay(500);
@@ -400,6 +416,7 @@ void connectToWiFi() {
     Serial.print("Signal strength: ");
     Serial.print(WiFi.RSSI());
     Serial.println(" dBm");
+    Serial.println("✓ WiFi Modem Sleep active (station mode)");
   } else {
     sta_connected = false;
     Serial.println("\nFailed to connect to WiFi");
