@@ -32,13 +32,37 @@
 #include <Preferences.h>
 #include <ArduinoOTA.h>
 #include <ESPmDNS.h>
+#include <Wire.h>
+#include <Adafruit_BMP280.h>
+#include <Adafruit_AHTX0.h>
+#include "esp_task_wdt.h"  // Watchdog timer for freeze protection
 #include "index.h"  // HTML page content
+
+// Watchdog timer configuration (10 seconds)
+#define WDT_TIMEOUT 10
 
 // Web server on port 80
 WebServer server(80);
 
 // NVS storage for WiFi credentials
 Preferences preferences;
+
+// BMP280 Sensor Configuration
+// I2C pins for ESP32-C3 Super Mini
+#define I2C_SDA 6
+#define I2C_SCL 7
+#define BMP280_ADDRESS 0x76  // or 0x77 depending on your module
+
+Adafruit_BMP280 bmp;
+Adafruit_AHTX0 aht;
+bool bmpAvailable = false;
+bool ahtAvailable = false;
+
+// Sensor readings
+float currentTemperature = 0.0;
+float currentPressure = 0.0;
+float currentAltitude = 0.0;
+float currentHumidity = 0.0;
 
 // AP Configuration
 const char* ap_ssid = "ESP32-Monitor";
@@ -63,16 +87,24 @@ unsigned long lastHeartbeat = 0;
 int heartbeatStep = 0;  // 0-3: controls heartbeat sequence (4 steps)
 const int HEARTBEAT_PATTERN[] = {100, 100, 100, 1500};  // ms for each step: beat1, pause, beat2, long pause
 
-// WiFi Roaming Configuration
+// WiFi Roaming Configuration with Exponential Backoff
 const int RSSI_THRESHOLD = -75;  // Reconnect if signal drops below this (dBm)
 const int RSSI_IMPROVEMENT = 10;  // Switch if another AP is this much stronger (dBm)
-const unsigned long ROAMING_CHECK_INTERVAL = 15000;  // Check every 15 seconds
+
+// Progressive interval using exponential backoff: 15s → 30s → 60s → 120s
+const unsigned long ROAMING_INTERVAL_MIN = 15000;   // Start at 15 seconds
+const unsigned long ROAMING_INTERVAL_MAX = 120000;  // Max 2 minutes
+unsigned long currentRoamingInterval = ROAMING_INTERVAL_MIN;  // Current interval (increases on failure)
 unsigned long lastRoamingCheck = 0;
 
 // Function prototypes
 void setupAccessPoint();
 void setupOTA();
 void setupMDNS();
+void setupBMP280();
+void setupAHT20();
+void readBMP280();
+void readAHT20();
 void loadWiFiCredentials();
 void saveWiFiCredentials(String ssid, String password);
 void connectToWiFi();
@@ -91,15 +123,30 @@ void setup() {
 
   startTime = millis();
 
+  // Initialize watchdog timer to prevent system freezes
+  // If the system freezes for more than 10 seconds, it will auto-reset
+  esp_task_wdt_init(WDT_TIMEOUT, true);  // 10 sec timeout, panic on timeout
+  esp_task_wdt_add(NULL);  // Add current thread to watchdog
+  Serial.println("✓ Watchdog timer enabled (10s timeout)");
+
   // POWER SAVING: Reduce CPU frequency to 80 MHz (minimum for WiFi operation)
   // This reduces power consumption by ~30-40% while maintaining WiFi functionality
   // 160 MHz → 80 MHz saves approximately 20-30 mA
   setCpuFrequencyMhz(80);
-  Serial.println("\n✓ CPU Frequency reduced to 80 MHz for power saving");
+  Serial.println("✓ CPU Frequency reduced to 80 MHz for power saving");
 
   // Setup LED pin
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);  // Start with LED off
+
+  // Give sensors time to power up and stabilize after CPU frequency change
+  delay(500);
+
+  // Initialize BMP280 sensor
+  setupBMP280();
+
+  // Initialize AHT20 sensor
+  setupAHT20();
 
   Serial.println("\n=================================");
   Serial.println("ESP32-C3 Super Mini - Monitor");
@@ -173,12 +220,27 @@ void setup() {
 }
 
 void loop() {
+  // Feed the watchdog timer to prevent auto-reset
+  esp_task_wdt_reset();
+
   server.handleClient();
 
   // Handle OTA updates (only when connected to WiFi)
   // Note: mDNS runs automatically in background on ESP32
   if (sta_connected) {
     ArduinoOTA.handle();
+  }
+
+  // Read sensor data (every 5 seconds to reduce I2C bus stress)
+  static unsigned long lastSensorRead = 0;
+  if (millis() - lastSensorRead >= 5000) {
+    lastSensorRead = millis();
+
+    // Feed watchdog before potentially slow I2C operations
+    esp_task_wdt_reset();
+
+    readBMP280();
+    readAHT20();
   }
 
   // Check WiFi connection status
@@ -458,8 +520,8 @@ void connectToWiFi() {
 void checkWiFiRoaming() {
   unsigned long currentMillis = millis();
 
-  // Only check at specified intervals
-  if (currentMillis - lastRoamingCheck < ROAMING_CHECK_INTERVAL) {
+  // Only check at current progressive interval (exponential backoff)
+  if (currentMillis - lastRoamingCheck < currentRoamingInterval) {
     return;
   }
 
@@ -468,16 +530,23 @@ void checkWiFiRoaming() {
   int currentRSSI = WiFi.RSSI();
   String currentBSSID = WiFi.BSSIDstr();
 
-  // Only consider roaming if signal is weak or we want to find a better AP
+  // If signal is good, reset to minimum interval and skip scan
   if (currentRSSI > RSSI_THRESHOLD) {
-    // Signal is good, no need to roam
-    return;
+    // Signal improved - reset backoff timer for next time
+    if (currentRoamingInterval != ROAMING_INTERVAL_MIN) {
+      currentRoamingInterval = ROAMING_INTERVAL_MIN;
+      Serial.println("✓ WiFi signal good - reset roaming interval to 15s");
+    }
+    return;  // No scan needed
   }
 
   Serial.println("\n--- WiFi Roaming Check ---");
   Serial.print("Current RSSI: ");
   Serial.print(currentRSSI);
   Serial.println(" dBm (weak signal)");
+  Serial.print("Current interval: ");
+  Serial.print(currentRoamingInterval / 1000);
+  Serial.println("s");
   Serial.println("Scanning for better AP...");
 
   // Scan for networks
@@ -508,7 +577,7 @@ void checkWiFiRoaming() {
 
   // If we found a better AP, switch to it
   if (bestBSSID.length() > 0 && bestBSSID != currentBSSID) {
-    Serial.print("Switching to better AP: ");
+    Serial.print("✓ Switching to better AP: ");
     Serial.print(bestBSSID);
     Serial.print(" (");
     Serial.print(bestRSSI);
@@ -518,8 +587,29 @@ void checkWiFiRoaming() {
     WiFi.disconnect();
     delay(100);
     connectToWiFi();
+
+    // Successfully switched - reset interval to minimum
+    currentRoamingInterval = ROAMING_INTERVAL_MIN;
+    Serial.println("✓ Reset roaming interval to 15s after successful switch");
   } else {
-    Serial.println("No better AP found, staying connected");
+    Serial.println("✗ No better AP found, staying connected");
+
+    // No better AP found - increase interval (exponential backoff)
+    unsigned long newInterval = currentRoamingInterval * 2;
+    if (newInterval > ROAMING_INTERVAL_MAX) {
+      newInterval = ROAMING_INTERVAL_MAX;
+    }
+
+    if (newInterval != currentRoamingInterval) {
+      currentRoamingInterval = newInterval;
+      Serial.print("⏱  Increased roaming interval to ");
+      Serial.print(currentRoamingInterval / 1000);
+      Serial.println("s (exponential backoff)");
+    } else {
+      Serial.print("⏱  Staying at max interval: ");
+      Serial.print(currentRoamingInterval / 1000);
+      Serial.println("s");
+    }
   }
 
   Serial.println("--- Roaming Check Complete ---\n");
@@ -556,6 +646,132 @@ float getTemperature() {
   float temp_celsius = temperatureRead();
 
   return temp_celsius;
+}
+
+void setupBMP280() {
+  Serial.println("\n--- BMP280 Sensor Setup ---");
+
+  // Initialize I2C with custom pins for ESP32-C3 Super Mini
+  Wire.begin(I2C_SDA, I2C_SCL);
+  Wire.setTimeOut(50);  // 50ms timeout to prevent freezing on I2C errors
+
+  // Give I2C bus time to initialize
+  delay(100);
+
+  Serial.print("Attempting to initialize BMP280 at address 0x");
+  Serial.println(BMP280_ADDRESS, HEX);
+
+  // Try to initialize the sensor
+  if (!bmp.begin(BMP280_ADDRESS)) {
+    Serial.println("✗ Could not find BMP280 sensor!");
+    Serial.println("  Check wiring:");
+    Serial.println("  - VCC to 3V3");
+    Serial.println("  - GND to GND");
+    Serial.println("  - SDA to GPIO6");
+    Serial.println("  - SCL to GPIO7");
+    Serial.println("  Trying alternate address 0x77...");
+
+    // Try alternate I2C address
+    if (!bmp.begin(0x77)) {
+      Serial.println("✗ BMP280 not found at 0x77 either!");
+      Serial.println("--- BMP280 Setup Failed ---\n");
+      bmpAvailable = false;
+      return;
+    } else {
+      Serial.println("✓ BMP280 found at address 0x77!");
+    }
+  } else {
+    Serial.println("✓ BMP280 found at address 0x76!");
+  }
+
+  // Configure sensor settings for best accuracy
+  bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,     /* Operating Mode */
+                  Adafruit_BMP280::SAMPLING_X2,      /* Temperature oversampling */
+                  Adafruit_BMP280::SAMPLING_X16,     /* Pressure oversampling */
+                  Adafruit_BMP280::FILTER_X16,       /* Filtering */
+                  Adafruit_BMP280::STANDBY_MS_500);  /* Standby time */
+
+  bmpAvailable = true;
+  Serial.println("✓ BMP280 configured successfully!");
+  Serial.println("--- BMP280 Ready ---\n");
+
+  // Take initial reading
+  readBMP280();
+}
+
+void readBMP280() {
+  if (!bmpAvailable) {
+    return;
+  }
+
+  // Read sensor values
+  currentTemperature = bmp.readTemperature();
+  currentPressure = bmp.readPressure() / 100.0F;  // Convert Pa to hPa (mbar)
+  currentAltitude = bmp.readAltitude(1013.25);     // 1013.25 = sea-level pressure in hPa
+
+  // Optional: Print to serial for debugging
+  // Uncomment the lines below if you want to see sensor readings in serial monitor
+  /*
+  Serial.print("Temperature: ");
+  Serial.print(currentTemperature);
+  Serial.print(" °C, Pressure: ");
+  Serial.print(currentPressure);
+  Serial.print(" hPa, Altitude: ");
+  Serial.print(currentAltitude);
+  Serial.println(" m");
+  */
+}
+
+void setupAHT20() {
+  Serial.println("\n--- AHT20 Sensor Setup ---");
+
+  // Add delay to ensure AHT20 has time to be ready
+  delay(100);
+
+  Serial.println("Attempting to initialize AHT20 sensor...");
+
+  // Try to initialize the sensor (AHT20 is at address 0x38)
+  if (!aht.begin()) {
+    Serial.println("✗ Could not find AHT20 sensor!");
+    Serial.println("  Check wiring (same as BMP280):");
+    Serial.println("  - VCC to 3V3");
+    Serial.println("  - GND to GND");
+    Serial.println("  - SDA to GPIO6");
+    Serial.println("  - SCL to GPIO7");
+    Serial.println("--- AHT20 Setup Failed ---\n");
+    ahtAvailable = false;
+    return;
+  }
+
+  ahtAvailable = true;
+  Serial.println("✓ AHT20 sensor found!");
+  Serial.println("✓ AHT20 configured successfully!");
+  Serial.println("--- AHT20 Ready ---\n");
+}
+
+void readAHT20() {
+  if (!ahtAvailable) {
+    return;
+  }
+
+  // Read sensor values
+  sensors_event_t humidity, temp;
+  aht.getEvent(&humidity, &temp);
+
+  // Use AHT20 temperature (more accurate than BMP280)
+  // If you prefer BMP280 temperature, comment out the line below
+  currentTemperature = temp.temperature;
+  currentHumidity = humidity.relative_humidity;
+
+  // Optional: Print to serial for debugging
+  // Uncomment the lines below if you want to see sensor readings in serial monitor
+  /*
+  Serial.print("AHT20 - Temperature: ");
+  Serial.print(currentTemperature);
+  Serial.print(" °C, Humidity: ");
+  Serial.print(currentHumidity);
+  Serial.println(" %");
+  */
 }
 
 void handleRoot() {
@@ -672,6 +888,20 @@ void handleStatus() {
   json += "\"temperature\":" + String(getTemperature(), 1) + ",";
   json += "\"freeHeap\":" + String(ESP.getFreeHeap()) + ",";
   json += "\"cpuFreq\":" + String(ESP.getCpuFreqMHz()) + ",";
+
+  // Sensor data (BMP280 + AHT20)
+  json += "\"bmpAvailable\":" + String(bmpAvailable ? "true" : "false") + ",";
+  json += "\"ahtAvailable\":" + String(ahtAvailable ? "true" : "false") + ",";
+  if (bmpAvailable || ahtAvailable) {
+    json += "\"sensorTemperature\":" + String(currentTemperature, 1) + ",";
+  }
+  if (bmpAvailable) {
+    json += "\"bmpPressure\":" + String(currentPressure, 1) + ",";
+    json += "\"bmpAltitude\":" + String(currentAltitude, 1) + ",";
+  }
+  if (ahtAvailable) {
+    json += "\"ahtHumidity\":" + String(currentHumidity, 1) + ",";
+  }
 
   // Chip information
   json += "\"chipModel\":\"" + String(ESP.getChipModel()) + "\",";
