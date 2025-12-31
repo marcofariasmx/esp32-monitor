@@ -73,6 +73,9 @@ String sta_ssid = "";
 String sta_password = "";
 bool sta_connected = false;
 
+// OTA update flag
+bool otaInProgress = false;
+
 // Uptime tracking
 unsigned long startTime = 0;
 
@@ -121,6 +124,7 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
 
+  // OTA improvements test - firmware version 1.1
   startTime = millis();
 
   // Initialize watchdog timer to prevent system freezes
@@ -223,7 +227,10 @@ void loop() {
   // Feed the watchdog timer to prevent auto-reset
   esp_task_wdt_reset();
 
-  server.handleClient();
+  // Skip web server handling during OTA update
+  if (!otaInProgress) {
+    server.handleClient();
+  }
 
   // Handle OTA updates (only when connected to WiFi)
   // Note: mDNS runs automatically in background on ESP32
@@ -232,8 +239,9 @@ void loop() {
   }
 
   // Read sensor data (every 5 seconds to reduce I2C bus stress)
+  // Skip sensor readings during OTA update to prevent interference
   static unsigned long lastSensorRead = 0;
-  if (millis() - lastSensorRead >= 5000) {
+  if (!otaInProgress && millis() - lastSensorRead >= 5000) {
     lastSensorRead = millis();
 
     // Feed watchdog before potentially slow I2C operations
@@ -262,9 +270,17 @@ void loop() {
   }
 
   // LED control logic
-  if (sta_connected) {
+  unsigned long currentMillis = millis();
+
+  if (otaInProgress) {
+    // OTA in progress: Fast flashing (100ms interval) - very visible!
+    if (currentMillis - lastLedBlink >= 100) {
+      lastLedBlink = currentMillis;
+      ledState = !ledState;
+      digitalWrite(LED_PIN, ledState ? HIGH : LOW);
+    }
+  } else if (sta_connected) {
     // Connected to WiFi: Heartbeat pattern (♥ lub-dub ... pause ... ♥ lub-dub)
-    unsigned long currentMillis = millis();
     if (currentMillis - lastHeartbeat >= HEARTBEAT_PATTERN[heartbeatStep]) {
       lastHeartbeat = currentMillis;
 
@@ -280,7 +296,6 @@ void loop() {
     }
   } else {
     // Not connected: LED blinks (500ms interval)
-    unsigned long currentMillis = millis();
     if (currentMillis - lastLedBlink >= 500) {
       lastLedBlink = currentMillis;
       ledState = !ledState;
@@ -367,8 +382,38 @@ void setupOTA() {
     } else {  // U_SPIFFS
       type = "filesystem";
     }
-    Serial.println("\n--- OTA Update Started ---");
+
+    Serial.println("\n========================================");
+    Serial.println("       OTA UPDATE STARTING");
+    Serial.println("========================================");
     Serial.println("Type: " + type);
+    Serial.println("\nFreeing resources for OTA...");
+
+    // Set OTA flag to stop sensor readings and other tasks
+    otaInProgress = true;
+
+    // CRITICAL: Stop web server to free TCP buffers and memory
+    // This prevents TCP buffer overflow during OTA
+    server.stop();
+    Serial.println("✓ Web server stopped");
+
+    // CRITICAL: Disable WiFi modem sleep for stable connection during OTA
+    // Power saving can cause disconnections during upload
+    WiFi.setSleep(false);
+    Serial.println("✓ WiFi modem sleep disabled");
+
+    // Stop I2C sensors to prevent interrupts
+    // Frequent sensor readings can interfere with OTA timing
+    Wire.end();
+    Serial.println("✓ I2C bus closed");
+
+    // LED will flash rapidly (100ms) during OTA - handled in loop()
+    Serial.println("✓ LED will flash rapidly during OTA");
+
+    Serial.print("\nFree heap before OTA: ");
+    Serial.print(ESP.getFreeHeap() / 1024);
+    Serial.println(" KB");
+    Serial.println("Ready for upload...\n");
   });
 
   ArduinoOTA.onEnd([]() {
@@ -887,6 +932,7 @@ void handleStatus() {
   json += "\"uptime\":\"" + getUptime() + "\",";
   json += "\"temperature\":" + String(getTemperature(), 1) + ",";
   json += "\"freeHeap\":" + String(ESP.getFreeHeap()) + ",";
+  json += "\"totalHeap\":" + String(ESP.getHeapSize()) + ",";
   json += "\"cpuFreq\":" + String(ESP.getCpuFreqMHz()) + ",";
 
   // Sensor data (BMP280 + AHT20)
