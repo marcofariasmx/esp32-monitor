@@ -8,8 +8,15 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ESP32-C3 Monitor</title>
-    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://unpkg.com/lucide@latest" async onerror="console.log('Icons not available (no internet)')"></script>
     <style>
+        /* Hide icons gracefully if library doesn't load */
+        [data-lucide] {
+            display: inline-block;
+        }
+        [data-lucide]:empty {
+            display: none;
+        }
         :root {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
                 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
@@ -959,7 +966,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                         `;
                     });
                     networkList.innerHTML = html || '<div class="loading">No networks found</div>';
-                    lucide.createIcons();
+                    // Only call lucide if it's loaded (requires internet)
+                    if (typeof lucide !== 'undefined') {
+                        lucide.createIcons();
+                    }
                 })
                 .catch(error => {
                     console.error('Error:', error);
@@ -999,8 +1009,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         updateStatus();
         setInterval(updateStatus, 2000);
 
-        // Initialize Lucide icons
-        lucide.createIcons();
+        // Initialize Lucide icons (only if library loaded - requires internet)
+        if (typeof lucide !== 'undefined') {
+            lucide.createIcons();
+        }
 
         // Close modal on outside click
         document.getElementById('connectModal').addEventListener('click', function(e) {

@@ -532,14 +532,33 @@ void handleRoot() {
 }
 
 void handleScan() {
-  Serial.println("Scanning for WiFi networks...");
-  int n = WiFi.scanNetworks();
+  Serial.println("\n--- WiFi Scan Requested ---");
+
+  // IMPORTANT: Always delete previous scan results first
+  // This prevents "Scan already in progress" errors
+  WiFi.scanDelete();
+  delay(100);  // Give it time to clean up
+
+  Serial.println("Starting WiFi scan...");
+
+  // Use BLOCKING scan for reliability in AP+STA mode
+  // Async mode can hang in AP+STA configuration on ESP32-C3
+  int n = WiFi.scanNetworks(false, true);  // blocking mode, show hidden networks
+
+  if (n < 0) {
+    Serial.println("✗ Scan failed! Error code: " + String(n));
+    WiFi.scanDelete();
+    server.send(500, "application/json", "{\"error\":\"Scan failed\"}");
+    return;
+  }
+
+  Serial.println("✓ Scan complete! Found " + String(n) + " networks");
 
   // Deduplicate networks - keep only the strongest signal for each SSID
   // Using a simple map-like structure with arrays
-  String uniqueSSIDs[n];
-  int uniqueRSSI[n];
-  int uniqueEncryption[n];
+  String uniqueSSIDs[n > 0 ? n : 1];  // Prevent zero-size array
+  int uniqueRSSI[n > 0 ? n : 1];
+  int uniqueEncryption[n > 0 ? n : 1];
   int uniqueCount = 0;
 
   for (int i = 0; i < n; i++) {
@@ -586,7 +605,12 @@ void handleScan() {
   json += "]";
 
   server.send(200, "application/json", json);
-  Serial.println("Scan complete. Found " + String(n) + " networks (" + String(uniqueCount) + " unique)");
+
+  // Clean up scan results
+  WiFi.scanDelete();
+
+  Serial.println("✓ Sent " + String(uniqueCount) + " unique networks to client");
+  Serial.println("--- WiFi Scan Complete ---\n");
 }
 
 void handleConnect() {
