@@ -128,6 +128,10 @@ void setup() {
   // Give AP time to stabilize
   delay(500);
 
+  // Setup mDNS on AP interface (works immediately, no WiFi needed)
+  // This makes http://esp32-monitor.local/ work on the AP network (192.168.4.x)
+  setupMDNS();
+
   // Try to connect to saved WiFi network
   if (sta_ssid.length() > 0) {
     Serial.println("Attempting to connect to saved WiFi...");
@@ -136,9 +140,10 @@ void setup() {
     Serial.println("No saved WiFi credentials - AP mode only\n");
   }
 
-  // Setup OTA updates and mDNS (only works when connected to WiFi)
+  // Setup OTA updates and reinitialize mDNS for Station mode
+  // mDNS will now work on BOTH AP interface (192.168.4.x) and Station (home WiFi)
   if (sta_connected) {
-    setupMDNS();
+    setupMDNS();  // Reinitialize for dual-interface operation
     setupOTA();
   }
 
@@ -171,6 +176,7 @@ void loop() {
   server.handleClient();
 
   // Handle OTA updates (only when connected to WiFi)
+  // Note: mDNS runs automatically in background on ESP32
   if (sta_connected) {
     ArduinoOTA.handle();
   }
@@ -348,18 +354,44 @@ void setupOTA() {
 }
 
 void setupMDNS() {
-  // Start mDNS service
-  if (MDNS.begin("esp32-monitor")) {
-    Serial.println("\n--- mDNS Started ---");
-    Serial.println("Hostname: esp32-monitor.local");
-    Serial.println("Access via: http://esp32-monitor.local");
+  Serial.println("\n--- Initializing mDNS ---");
 
+  // IMPORTANT: Always stop mDNS service first if it's running
+  // This ensures clean state when called from loop() after WiFi connects
+  MDNS.end();
+  delay(100);  // Give time for cleanup
+
+  // Start mDNS service with retry logic
+  bool success = false;
+  for (int attempt = 1; attempt <= 3; attempt++) {
+    Serial.print("mDNS attempt ");
+    Serial.print(attempt);
+    Serial.print("/3... ");
+
+    if (MDNS.begin("esp32-monitor")) {
+      success = true;
+      Serial.println("SUCCESS!");
+      break;
+    } else {
+      Serial.println("failed");
+      if (attempt < 3) {
+        delay(500);  // Wait before retry
+      }
+    }
+  }
+
+  if (success) {
     // Add service to mDNS-SD
     MDNS.addService("http", "tcp", 80);
 
-    Serial.println("--- mDNS Ready ---\n");
+    Serial.println("\n✓ mDNS Ready!");
+    Serial.println("Hostname: esp32-monitor.local");
+    Serial.println("Access via: http://esp32-monitor.local");
+    Serial.println("--- mDNS Initialized ---\n");
   } else {
-    Serial.println("✗ Error setting up mDNS responder!");
+    Serial.println("\n✗ mDNS failed after 3 attempts");
+    Serial.println("Device still accessible via IP address");
+    Serial.println("Try rebooting to enable mDNS\n");
   }
 }
 
