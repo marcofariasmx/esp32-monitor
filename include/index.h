@@ -665,6 +665,45 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
         <div id="dashboard" class="tab-content active">
             <div class="grid">
+                <div class="card" id="sensorCard">
+                    <div class="card-header">
+                        <div class="card-icon">
+                            <i data-lucide="gauge" style="width:20px;height:20px"></i>
+                        </div>
+                        <h3 class="card-title">Environmental Sensors</h3>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">BMP280 Status</span>
+                        <span id="bmpStatus">Loading...</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">AHT20 Status</span>
+                        <span id="ahtStatus">Loading...</span>
+                    </div>
+                    <div id="sensorData" style="display:none">
+                        <div class="metric-row">
+                            <span class="metric-label">Temperature</span>
+                            <span class="metric-value" id="sensorTemperature">-</span>
+                        </div>
+                        <div class="metric-row" id="pressureRow">
+                            <span class="metric-label">Pressure</span>
+                            <span class="metric-value" id="sensorPressure">-</span>
+                        </div>
+                        <div class="metric-row" id="humidityRow">
+                            <span class="metric-label">Humidity</span>
+                            <span class="metric-value" id="sensorHumidity">-</span>
+                        </div>
+                        <div class="metric-row" id="heatIndexRow">
+                            <span class="metric-label">Feels Like</span>
+                            <span class="metric-value" id="heatIndex">-</span>
+                        </div>
+                        <div class="metric-row" id="altitudeRow">
+                            <span class="metric-label">Altitude</span>
+                            <span class="metric-value" id="sensorAltitude">-</span>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="card">
                     <div class="card-header">
                         <div class="card-icon">
@@ -687,48 +726,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     <div class="metric-row">
                         <span class="metric-label">Free Heap</span>
                         <span class="metric-value" id="freeHeap">Loading...</span>
-                    </div>
-                </div>
-
-                <div class="card">
-                    <div class="card-header">
-                        <div class="card-icon">
-                            <i data-lucide="cpu" style="width:20px;height:20px"></i>
-                        </div>
-                        <h3 class="card-title">Hardware Info</h3>
-                    </div>
-                    <div class="metric-row">
-                        <span class="metric-label">Chip Model</span>
-                        <span class="metric-value" id="chipModel">Loading...</span>
-                    </div>
-                    <div class="metric-row">
-                        <span class="metric-label">Revision</span>
-                        <span class="metric-value" id="chipRevision">Loading...</span>
-                    </div>
-                    <div class="metric-row">
-                        <span class="metric-label">CPU Cores</span>
-                        <span class="metric-value" id="chipCores">Loading...</span>
-                    </div>
-                </div>
-
-                <div class="card">
-                    <div class="card-header">
-                        <div class="card-icon">
-                            <i data-lucide="hard-drive" style="width:20px;height:20px"></i>
-                        </div>
-                        <h3 class="card-title">Flash Memory</h3>
-                    </div>
-                    <div class="metric-row">
-                        <span class="metric-label">Total Size</span>
-                        <span class="metric-value" id="flashSize">Loading...</span>
-                    </div>
-                    <div class="metric-row">
-                        <span class="metric-label">Sketch Size</span>
-                        <span class="metric-value" id="sketchSize">Loading...</span>
-                    </div>
-                    <div class="metric-row">
-                        <span class="metric-label">Free Space</span>
-                        <span class="metric-value" id="freeSketchSpace">Loading...</span>
                     </div>
                 </div>
 
@@ -763,38 +760,45 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     </div>
                 </div>
 
-                <div class="card" id="sensorCard">
+                <div class="card">
                     <div class="card-header">
                         <div class="card-icon">
-                            <i data-lucide="gauge" style="width:20px;height:20px"></i>
+                            <i data-lucide="hard-drive" style="width:20px;height:20px"></i>
                         </div>
-                        <h3 class="card-title">Environmental Sensors</h3>
+                        <h3 class="card-title">Flash Memory</h3>
                     </div>
                     <div class="metric-row">
-                        <span class="metric-label">BMP280 Status</span>
-                        <span id="bmpStatus">Loading...</span>
+                        <span class="metric-label">Total Size</span>
+                        <span class="metric-value" id="flashSize">Loading...</span>
                     </div>
                     <div class="metric-row">
-                        <span class="metric-label">AHT20 Status</span>
-                        <span id="ahtStatus">Loading...</span>
+                        <span class="metric-label">Sketch Size</span>
+                        <span class="metric-value" id="sketchSize">Loading...</span>
                     </div>
-                    <div id="sensorData" style="display:none">
-                        <div class="metric-row">
-                            <span class="metric-label">Temperature</span>
-                            <span class="metric-value" id="sensorTemperature">-</span>
+                    <div class="metric-row">
+                        <span class="metric-label">Free Space</span>
+                        <span class="metric-value" id="freeSketchSpace">Loading...</span>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-icon">
+                            <i data-lucide="cpu" style="width:20px;height:20px"></i>
                         </div>
-                        <div class="metric-row" id="pressureRow">
-                            <span class="metric-label">Pressure</span>
-                            <span class="metric-value" id="sensorPressure">-</span>
-                        </div>
-                        <div class="metric-row" id="humidityRow">
-                            <span class="metric-label">Humidity</span>
-                            <span class="metric-value" id="sensorHumidity">-</span>
-                        </div>
-                        <div class="metric-row" id="altitudeRow">
-                            <span class="metric-label">Altitude</span>
-                            <span class="metric-value" id="sensorAltitude">-</span>
-                        </div>
+                        <h3 class="card-title">Hardware Info</h3>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">Chip Model</span>
+                        <span class="metric-value" id="chipModel">Loading...</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">Revision</span>
+                        <span class="metric-value" id="chipRevision">Loading...</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">CPU Cores</span>
+                        <span class="metric-value" id="chipCores">Loading...</span>
                     </div>
                 </div>
             </div>
@@ -921,7 +925,13 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 .then(data => {
                     // System stats
                     document.getElementById('uptime').textContent = data.uptime;
-                    document.getElementById('freeHeap').textContent = (data.freeHeap / 1024).toFixed(2) + ' KB';
+
+                    // Free Heap with percentage
+                    const freeHeapKB = (data.freeHeap / 1024).toFixed(2);
+                    const totalHeapKB = (data.totalHeap / 1024).toFixed(2);
+                    const heapPercent = ((data.freeHeap / data.totalHeap) * 100).toFixed(1);
+                    document.getElementById('freeHeap').textContent = freeHeapKB + ' KB (' + heapPercent + '%)';
+
                     document.getElementById('cpuFreq').textContent = data.cpuFreq + ' MHz';
                     document.getElementById('temperature').textContent = data.temperature.toFixed(1) + ' °C';
 
@@ -930,10 +940,17 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     document.getElementById('chipRevision').textContent = 'v' + data.chipRevision;
                     document.getElementById('chipCores').textContent = data.chipCores;
 
-                    // Flash info
-                    document.getElementById('flashSize').textContent = (data.flashSize / (1024 * 1024)).toFixed(2) + ' MB';
-                    document.getElementById('sketchSize').textContent = (data.sketchSize / 1024).toFixed(2) + ' KB';
-                    document.getElementById('freeSketchSpace').textContent = (data.freeSketchSpace / 1024).toFixed(2) + ' KB';
+                    // Flash info with percentages
+                    const flashSizeMB = (data.flashSize / (1024 * 1024)).toFixed(2);
+                    document.getElementById('flashSize').textContent = flashSizeMB + ' MB';
+
+                    const sketchSizeKB = (data.sketchSize / 1024).toFixed(2);
+                    const sketchPercent = ((data.sketchSize / data.flashSize) * 100).toFixed(1);
+                    document.getElementById('sketchSize').textContent = sketchSizeKB + ' KB (' + sketchPercent + '%)';
+
+                    const freeSketchKB = (data.freeSketchSpace / 1024).toFixed(2);
+                    const freeSketchPercent = ((data.freeSketchSpace / data.flashSize) * 100).toFixed(1);
+                    document.getElementById('freeSketchSpace').textContent = freeSketchKB + ' KB (' + freeSketchPercent + '%)';
 
                     // Network info
                     document.getElementById('apIP').textContent = data.apIP;
@@ -975,6 +992,41 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                             document.getElementById('sensorHumidity').textContent = data.ahtHumidity.toFixed(1) + ' %';
                         } else {
                             document.getElementById('humidityRow').style.display = 'none';
+                        }
+
+                        // Heat Index / Feels Like (calculated from temperature and humidity)
+                        if (ahtConnected && data.sensorTemperature !== undefined && data.ahtHumidity !== undefined) {
+                            const t = data.sensorTemperature;
+                            const rh = data.ahtHumidity;
+
+                            // Calculate heat index using Steadman's formula (simplified)
+                            // This formula works best for temperatures above 27°C (80°F) and humidity above 40%
+                            let heatIndex;
+
+                            if (t >= 27 && rh >= 40) {
+                                // Full heat index formula (Rothfusz regression)
+                                const c1 = -8.78469475556;
+                                const c2 = 1.61139411;
+                                const c3 = 2.33854883889;
+                                const c4 = -0.14611605;
+                                const c5 = -0.012308094;
+                                const c6 = -0.0164248277778;
+                                const c7 = 0.002211732;
+                                const c8 = 0.00072546;
+                                const c9 = -0.000003582;
+
+                                heatIndex = c1 + (c2 * t) + (c3 * rh) + (c4 * t * rh) +
+                                           (c5 * t * t) + (c6 * rh * rh) + (c7 * t * t * rh) +
+                                           (c8 * t * rh * rh) + (c9 * t * t * rh * rh);
+                            } else {
+                                // For lower temperatures, use simple formula or just show temperature
+                                heatIndex = t + (0.5555 * ((6.11 * Math.pow(Math.E, (5417.7530 * ((1/273.16) - (1/(273.15+t)))))) * (rh/100) - 10));
+                            }
+
+                            document.getElementById('heatIndexRow').style.display = 'flex';
+                            document.getElementById('heatIndex').textContent = heatIndex.toFixed(1) + ' °C';
+                        } else {
+                            document.getElementById('heatIndexRow').style.display = 'none';
                         }
 
                         // Altitude (calculated from BMP280)
