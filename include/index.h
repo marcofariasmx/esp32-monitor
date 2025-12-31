@@ -762,6 +762,41 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                         </div>
                     </div>
                 </div>
+
+                <div class="card" id="sensorCard">
+                    <div class="card-header">
+                        <div class="card-icon">
+                            <i data-lucide="gauge" style="width:20px;height:20px"></i>
+                        </div>
+                        <h3 class="card-title">Environmental Sensors</h3>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">BMP280 Status</span>
+                        <span id="bmpStatus">Loading...</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">AHT20 Status</span>
+                        <span id="ahtStatus">Loading...</span>
+                    </div>
+                    <div id="sensorData" style="display:none">
+                        <div class="metric-row">
+                            <span class="metric-label">Temperature</span>
+                            <span class="metric-value" id="sensorTemperature">-</span>
+                        </div>
+                        <div class="metric-row" id="pressureRow">
+                            <span class="metric-label">Pressure</span>
+                            <span class="metric-value" id="sensorPressure">-</span>
+                        </div>
+                        <div class="metric-row" id="humidityRow">
+                            <span class="metric-label">Humidity</span>
+                            <span class="metric-value" id="sensorHumidity">-</span>
+                        </div>
+                        <div class="metric-row" id="altitudeRow">
+                            <span class="metric-label">Altitude</span>
+                            <span class="metric-value" id="sensorAltitude">-</span>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -902,6 +937,56 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
                     // Network info
                     document.getElementById('apIP').textContent = data.apIP;
+
+                    // Environmental sensors data
+                    const bmpConnected = data.bmpAvailable;
+                    const ahtConnected = data.ahtAvailable;
+                    const anySensorConnected = bmpConnected || ahtConnected;
+
+                    // Update sensor status badges
+                    document.getElementById('bmpStatus').innerHTML = bmpConnected
+                        ? '<span class="badge badge-success">Connected</span>'
+                        : '<span class="badge badge-error">Not Found</span>';
+
+                    document.getElementById('ahtStatus').innerHTML = ahtConnected
+                        ? '<span class="badge badge-success">Connected</span>'
+                        : '<span class="badge badge-error">Not Found</span>';
+
+                    // Show/hide sensor data section
+                    if (anySensorConnected) {
+                        document.getElementById('sensorData').style.display = 'block';
+
+                        // Temperature (from AHT20 if available, otherwise from BMP280)
+                        if (data.sensorTemperature !== undefined) {
+                            document.getElementById('sensorTemperature').textContent = data.sensorTemperature.toFixed(1) + ' °C';
+                        }
+
+                        // Pressure (from BMP280)
+                        if (bmpConnected && data.bmpPressure !== undefined) {
+                            document.getElementById('pressureRow').style.display = 'flex';
+                            document.getElementById('sensorPressure').textContent = data.bmpPressure.toFixed(1) + ' hPa';
+                        } else {
+                            document.getElementById('pressureRow').style.display = 'none';
+                        }
+
+                        // Humidity (from AHT20)
+                        if (ahtConnected && data.ahtHumidity !== undefined) {
+                            document.getElementById('humidityRow').style.display = 'flex';
+                            document.getElementById('sensorHumidity').textContent = data.ahtHumidity.toFixed(1) + ' %';
+                        } else {
+                            document.getElementById('humidityRow').style.display = 'none';
+                        }
+
+                        // Altitude (calculated from BMP280)
+                        if (bmpConnected && data.bmpAltitude !== undefined) {
+                            document.getElementById('altitudeRow').style.display = 'flex';
+                            document.getElementById('sensorAltitude').textContent = data.bmpAltitude.toFixed(1) + ' m';
+                        } else {
+                            document.getElementById('altitudeRow').style.display = 'none';
+                        }
+                    } else {
+                        document.getElementById('sensorData').style.display = 'none';
+                    }
 
                     if (data.staConnected) {
                         document.getElementById('staStatus').innerHTML = '<span class="badge badge-success">Connected</span>';
