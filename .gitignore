@@ -33,3 +33,4 @@ Thumbs.db
 # Credentials and secrets
 secrets.h
 credentials.h
+*.bak

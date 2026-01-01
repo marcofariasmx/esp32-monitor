@@ -80,6 +80,10 @@ bool otaInProgress = false;
 unsigned long startTime = 0;
 
 // LED Configuration (ESP32-C3 Super Mini onboard LED)
+// CRITICAL: GPIO8 is a strapping pin that determines boot mode!
+// - GPIO8 must be HIGH during power-up for normal boot mode
+// - If GPIO8 is LOW during power-up, ESP32-C3 enters wrong boot mode and gets stuck
+// SOLUTION: Always ensure GPIO8 is HIGH before any restart/reboot
 const int LED_PIN = 8;  // GPIO8 for ESP32-C3 Super Mini blue LED
 unsigned long lastLedBlink = 0;
 bool ledState = false;
@@ -139,9 +143,10 @@ void setup() {
   setCpuFrequencyMhz(80);
   Serial.println("✓ CPU Frequency reduced to 80 MHz for power saving");
 
-  // Setup LED pin
+  // Setup LED pin (ESP32-C3 Super Mini LED is active-LOW: HIGH=off, LOW=on)
+  // CRITICAL: Start with GPIO8 HIGH to ensure safe boot mode on next power cycle
   pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, LOW);  // Start with LED off
+  digitalWrite(LED_PIN, HIGH);  // Start with GPIO8 HIGH (LED off on active-low LED)
 
   // Give sensors time to power up and stabilize after CPU frequency change
   delay(500);
@@ -269,7 +274,7 @@ void loop() {
     checkWiFiRoaming();
   }
 
-  // LED control logic
+  // LED control logic (INVERTED: ESP32-C3 Super Mini LED is active-LOW)
   unsigned long currentMillis = millis();
 
   if (otaInProgress) {
@@ -277,7 +282,7 @@ void loop() {
     if (currentMillis - lastLedBlink >= 100) {
       lastLedBlink = currentMillis;
       ledState = !ledState;
-      digitalWrite(LED_PIN, ledState ? HIGH : LOW);
+      digitalWrite(LED_PIN, ledState ? LOW : HIGH);  // Inverted: LOW=on, HIGH=off
     }
   } else if (sta_connected) {
     // Connected to WiFi: Heartbeat pattern (♥ lub-dub ... pause ... ♥ lub-dub)
@@ -287,9 +292,9 @@ void loop() {
       // Steps: ON(100ms)-OFF(100ms)-ON(100ms)-OFF(1500ms)-loop
       // This creates: lub ... dub ... long pause (like a real heartbeat!)
       if (heartbeatStep == 0 || heartbeatStep == 2) {
-        digitalWrite(LED_PIN, HIGH);  // ON for "lub" (step 0) and "dub" (step 2)
+        digitalWrite(LED_PIN, LOW);  // Inverted: LOW = ON for "lub" and "dub"
       } else {
-        digitalWrite(LED_PIN, LOW);   // OFF for pauses (steps 1 and 3)
+        digitalWrite(LED_PIN, HIGH);  // Inverted: HIGH = OFF for pauses
       }
 
       heartbeatStep = (heartbeatStep + 1) % 4;  // Cycle through 4 steps
@@ -299,7 +304,7 @@ void loop() {
     if (currentMillis - lastLedBlink >= 500) {
       lastLedBlink = currentMillis;
       ledState = !ledState;
-      digitalWrite(LED_PIN, ledState ? HIGH : LOW);
+      digitalWrite(LED_PIN, ledState ? LOW : HIGH);  // Inverted: LOW=on, HIGH=off
     }
   }
 }
@@ -418,6 +423,13 @@ void setupOTA() {
 
   ArduinoOTA.onEnd([]() {
     Serial.println("\n--- OTA Update Complete ---");
+
+    // CRITICAL: Set GPIO8 HIGH before reboot to ensure safe boot mode
+    // This prevents boot failures caused by GPIO8=LOW during power-up
+    digitalWrite(LED_PIN, HIGH);  // HIGH = safe boot state for GPIO8 strapping pin
+    delay(100);  // Allow pin state to stabilize
+
+    Serial.println("✓ GPIO8 set HIGH for safe reboot");
     Serial.println("Rebooting...");
   });
 
