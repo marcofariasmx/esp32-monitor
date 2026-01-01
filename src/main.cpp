@@ -36,7 +36,11 @@
 #include <Adafruit_BMP280.h>
 #include <Adafruit_AHTX0.h>
 #include "esp_task_wdt.h"  // Watchdog timer for freeze protection
+#include "esp_wifi.h"      // For esp_wifi_set_ps() power save control
 #include "index.h"  // HTML page content
+
+// Firmware version
+#define FIRMWARE_VERSION "1.3.4"
 
 // Watchdog timer configuration (10 seconds)
 #define WDT_TIMEOUT 10
@@ -75,6 +79,11 @@ bool sta_connected = false;
 
 // OTA update flag
 bool otaInProgress = false;
+
+// OTA preparation tracking (for disabling WiFi power save temporarily)
+bool otaPrepared = false;
+unsigned long otaPreparedTime = 0;
+const unsigned long OTA_PREP_TIMEOUT = 300000;  // 5 minutes in milliseconds
 
 // Uptime tracking
 unsigned long startTime = 0;
@@ -120,6 +129,7 @@ void handleRoot();
 void handleScan();
 void handleConnect();
 void handleStatus();
+void handlePrepareOTA();
 String getUptime();
 float getTemperature();
 String getHTMLPage();
@@ -208,6 +218,7 @@ void setup() {
   server.on("/scan", handleScan);
   server.on("/connect", handleConnect);
   server.on("/status", handleStatus);
+  server.on("/prepare-ota", handlePrepareOTA);
 
   // Start web server
   server.begin();
@@ -241,6 +252,17 @@ void loop() {
   // Note: mDNS runs automatically in background on ESP32
   if (sta_connected) {
     ArduinoOTA.handle();
+
+    // Check if OTA prep timeout expired and re-enable power save
+    // IMPORTANT: Don't re-enable power save if OTA is currently in progress!
+    if (otaPrepared && !otaInProgress && (millis() - otaPreparedTime > OTA_PREP_TIMEOUT)) {
+      Serial.println("\n--- OTA Prep Timeout ---");
+      Serial.println("Re-enabling WiFi power save (modem sleep)");
+      WiFi.setSleep(true);
+      esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+      otaPrepared = false;
+      Serial.println("✓ WiFi modem sleep re-enabled\n");
+    }
   }
 
   // Read sensor data (every 5 seconds to reduce I2C bus stress)
@@ -269,8 +291,8 @@ void loop() {
     setupOTA();
   }
 
-  // WiFi roaming check - only when connected
-  if (sta_connected) {
+  // WiFi roaming check - only when connected and NOT during OTA
+  if (sta_connected && !otaPrepared && !otaInProgress) {
     checkWiFiRoaming();
   }
 
@@ -278,7 +300,14 @@ void loop() {
   unsigned long currentMillis = millis();
 
   if (otaInProgress) {
-    // OTA in progress: Fast flashing (100ms interval) - very visible!
+    // OTA in progress: Extremely fast flashing (50ms interval) - actively uploading!
+    if (currentMillis - lastLedBlink >= 50) {
+      lastLedBlink = currentMillis;
+      ledState = !ledState;
+      digitalWrite(LED_PIN, ledState ? LOW : HIGH);  // Inverted: LOW=on, HIGH=off
+    }
+  } else if (otaPrepared) {
+    // OTA prepared: Fast blinking (100ms interval) - ready for upload!
     if (currentMillis - lastLedBlink >= 100) {
       lastLedBlink = currentMillis;
       ledState = !ledState;
@@ -290,11 +319,11 @@ void loop() {
       lastHeartbeat = currentMillis;
 
       // Steps: ON(100ms)-OFF(100ms)-ON(100ms)-OFF(1500ms)-loop
-      // This creates: lub ... dub ... long pause (like a real heartbeat!)
+      // Pattern: Brief "lub-dub" pulses (200ms ON) with long dark pauses (1600ms OFF)
       if (heartbeatStep == 0 || heartbeatStep == 2) {
-        digitalWrite(LED_PIN, LOW);  // Inverted: LOW = ON for "lub" and "dub"
+        digitalWrite(LED_PIN, LOW);   // LED ON for "lub" and "dub" beats
       } else {
-        digitalWrite(LED_PIN, HIGH);  // Inverted: HIGH = OFF for pauses
+        digitalWrite(LED_PIN, HIGH);  // LED OFF for pauses (steps 1 and 3)
       }
 
       heartbeatStep = (heartbeatStep + 1) % 4;  // Cycle through 4 steps
@@ -402,17 +431,29 @@ void setupOTA() {
     server.stop();
     Serial.println("✓ Web server stopped");
 
-    // CRITICAL: Disable WiFi modem sleep for stable connection during OTA
-    // Power saving can cause disconnections during upload
-    WiFi.setSleep(false);
-    Serial.println("✓ WiFi modem sleep disabled");
+    // WiFi power save should already be disabled via /prepare-ota endpoint
+    // If not already disabled, disable it now (backup safety)
+    if (!otaPrepared) {
+      Serial.println("⚠ WARNING: OTA started without /prepare-ota call!");
+      Serial.println("Disabling WiFi power save now...");
+      WiFi.setSleep(false);
+      esp_wifi_set_ps(WIFI_PS_NONE);
+      Serial.println("✓ WiFi power save FULLY disabled (WIFI_PS_NONE)");
+    } else {
+      Serial.println("✓ WiFi power save already disabled via /prepare-ota");
+    }
 
     // Stop I2C sensors to prevent interrupts
     // Frequent sensor readings can interfere with OTA timing
     Wire.end();
     Serial.println("✓ I2C bus closed");
 
-    // LED will flash rapidly (100ms) during OTA - handled in loop()
+    // CRITICAL: Disable watchdog timer during OTA to prevent timeout resets
+    // Flash writes can take >10 seconds, exceeding the watchdog timeout
+    esp_task_wdt_delete(NULL);  // Remove current task from watchdog
+    Serial.println("✓ Watchdog timer disabled for OTA");
+
+    // LED will flash rapidly (50ms) during OTA - handled in loop()
     Serial.println("✓ LED will flash rapidly during OTA");
 
     Serial.print("\nFree heap before OTA: ");
@@ -423,6 +464,9 @@ void setupOTA() {
 
   ArduinoOTA.onEnd([]() {
     Serial.println("\n--- OTA Update Complete ---");
+
+    // Clear OTA prep flag (power save will be re-enabled after reboot)
+    otaPrepared = false;
 
     // CRITICAL: Set GPIO8 HIGH before reboot to ensure safe boot mode
     // This prevents boot failures caused by GPIO8=LOW during power-up
@@ -548,7 +592,10 @@ void connectToWiFi() {
   WiFi.setTxPower(WIFI_POWER_8_5dBm);
 
   // POWER SAVING: Enable WiFi Modem Sleep for station mode
-  WiFi.setSleep(true);
+  // BUT: Don't enable if OTA is prepared or in progress!
+  if (!otaPrepared && !otaInProgress) {
+    WiFi.setSleep(true);
+  }
 
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 20) {
@@ -940,6 +987,9 @@ void handleConnect() {
 void handleStatus() {
   String json = "{";
 
+  // Firmware version
+  json += "\"firmwareVersion\":\"" + String(FIRMWARE_VERSION) + "\",";
+
   // System statistics
   json += "\"uptime\":\"" + getUptime() + "\",";
   json += "\"temperature\":" + String(getTemperature(), 1) + ",";
@@ -978,6 +1028,35 @@ void handleStatus() {
   json += "\"staSSID\":\"" + (sta_connected ? WiFi.SSID() : "N/A") + "\",";
   json += "\"staRSSI\":" + String(sta_connected ? WiFi.RSSI() : 0);
 
+  json += "}";
+
+  server.send(200, "application/json", json);
+}
+
+void handlePrepareOTA() {
+  Serial.println("\n========================================");
+  Serial.println("     PREPARE OTA ENDPOINT CALLED");
+  Serial.println("========================================");
+
+  // Disable WiFi power save for the next 5 minutes
+  WiFi.setSleep(false);
+  esp_wifi_set_ps(WIFI_PS_NONE);
+
+  // Set flag and timestamp
+  otaPrepared = true;
+  otaPreparedTime = millis();
+
+  Serial.println("✓ WiFi power save DISABLED (WIFI_PS_NONE)");
+  Serial.println("✓ OTA window active for 5 minutes");
+  Serial.println("✓ Ready for OTA upload");
+  Serial.println("========================================\n");
+
+  // Return success JSON
+  String json = "{";
+  json += "\"status\":\"success\",";
+  json += "\"message\":\"OTA preparation complete. WiFi power save disabled for 5 minutes.\",";
+  json += "\"otaPrepared\":true,";
+  json += "\"timeout\":300";
   json += "}";
 
   server.send(200, "application/json", json);
