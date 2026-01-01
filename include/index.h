@@ -636,7 +636,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             <div class="header-content">
                 <div class="header-title">
                     <h1>ESP32-C3 Monitor</h1>
-                    <p>System Dashboard & WiFi Manager</p>
+                    <p>System Dashboard & WiFi Manager • <span id="firmwareVersion">v?.?.?</span></p>
                 </div>
                 <div class="header-actions">
                     <div class="status-indicator">
@@ -923,6 +923,11 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             fetch('/status')
                 .then(response => response.json())
                 .then(data => {
+                    // Firmware version
+                    if (data.firmwareVersion) {
+                        document.getElementById('firmwareVersion').textContent = 'v' + data.firmwareVersion;
+                    }
+
                     // System stats
                     document.getElementById('uptime').textContent = data.uptime;
 
