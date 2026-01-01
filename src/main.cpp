@@ -1,29 +1,19 @@
 /*
- * ESP32-C3 Super Mini - System Monitor & WiFi Manager
+ * ESP32 Multi-Board System Monitor & WiFi Manager
  *
- * CRITICAL: WiFi Power Fix Required for ESP32-C3 Super Mini
- * =========================================================
- * The ESP32-C3 Super Mini has a hardware power supply design limitation
- * that prevents WiFi from working at default transmission power levels.
+ * Supports:
+ * - ESP32-C3 Super Mini / DevKitM-1
+ * - ESP32 WROOM-32 / DevKit
  *
- * SYMPTOM: WiFi Access Point not visible on devices, even though serial
- *          output reports "Access Point created successfully"
+ * Board selection is done via PlatformIO environment:
+ * - pio run -e esp32c3        (for ESP32-C3)
+ * - pio run -e esp32wroom     (for ESP32 WROOM-32)
  *
- * SOLUTION: Call WiFi.setTxPower(WIFI_POWER_8_5dBm) immediately AFTER
- *           WiFi.softAP() or WiFi.begin()
+ * Board-specific settings (GPIO pins, WiFi power, CPU freq, etc.)
+ * are configured in include/board_config.h
  *
- * WHY: The board's power delivery circuit cannot supply enough power for
- *      the WiFi radio at higher transmission levels (>8.5dBm)
- *
- * This is a HARDWARE issue specific to ESP32-C3 Super Mini boards,
- * not a software bug. Documented in multiple GitHub issues:
- * - https://github.com/espressif/arduino-esp32/issues/6551
- * - https://github.com/luc-github/ESP3D/issues/1009
- *
- * Additional recommendations if WiFi still doesn't work:
- * - Use USB 3.0 port (provides more power than USB 2.0)
- * - Use high-quality USB cable (cheap cables have higher resistance)
- * - Use powered USB hub
+ * See board_config.h for important hardware-specific documentation
+ * (especially ESP32-C3 WiFi power limitations and GPIO8 strapping pin info)
  */
 
 #include <Arduino.h>
@@ -37,13 +27,8 @@
 #include <Adafruit_AHTX0.h>
 #include "esp_task_wdt.h"  // Watchdog timer for freeze protection
 #include "esp_wifi.h"      // For esp_wifi_set_ps() power save control
-#include "index.h"  // HTML page content
-
-// Firmware version
-#define FIRMWARE_VERSION "1.3.4"
-
-// Watchdog timer configuration (10 seconds)
-#define WDT_TIMEOUT 10
+#include "board_config.h"  // Board-specific configuration
+#include "index.h"         // HTML page content
 
 // Web server on port 80
 WebServer server(80);
@@ -51,12 +36,8 @@ WebServer server(80);
 // NVS storage for WiFi credentials
 Preferences preferences;
 
-// BMP280 Sensor Configuration
-// I2C pins for ESP32-C3 Super Mini
-#define I2C_SDA 6
-#define I2C_SCL 7
-#define BMP280_ADDRESS 0x76  // or 0x77 depending on your module
-
+// BMP280 and AHT20 Sensor Configuration
+// I2C pins are defined in board_config.h (board-specific)
 Adafruit_BMP280 bmp;
 Adafruit_AHTX0 aht;
 bool bmpAvailable = false;
@@ -68,9 +49,11 @@ float currentPressure = 0.0;
 float currentAltitude = 0.0;
 float currentHumidity = 0.0;
 
-// AP Configuration
-const char* ap_ssid = "ESP32-Monitor";
-const char* ap_password = "12345678";  // WPA2 password (min 8 chars) - more compatible than open network
+// AP Configuration (from board_config.h)
+// These will be modified with MAC address suffix in setup()
+String ap_ssid_unique = "";
+String mdns_hostname_unique = "";
+const char* ap_password = AP_PASSWORD;
 
 // Variables for WiFi
 String sta_ssid = "";
@@ -88,12 +71,9 @@ const unsigned long OTA_PREP_TIMEOUT = 300000;  // 5 minutes in milliseconds
 // Uptime tracking
 unsigned long startTime = 0;
 
-// LED Configuration (ESP32-C3 Super Mini onboard LED)
-// CRITICAL: GPIO8 is a strapping pin that determines boot mode!
-// - GPIO8 must be HIGH during power-up for normal boot mode
-// - If GPIO8 is LOW during power-up, ESP32-C3 enters wrong boot mode and gets stuck
-// SOLUTION: Always ensure GPIO8 is HIGH before any restart/reboot
-const int LED_PIN = 8;  // GPIO8 for ESP32-C3 Super Mini blue LED
+// LED Configuration (from board_config.h)
+// LED_PIN and LED_ACTIVE_LOW are defined per-board
+// Use LED_ON() and LED_OFF() macros for proper control
 unsigned long lastLedBlink = 0;
 bool ledState = false;
 
@@ -141,22 +121,34 @@ void setup() {
   // OTA improvements test - firmware version 1.1
   startTime = millis();
 
+  // Generate unique SSID and hostname based on MAC address (last 4 hex digits)
+  // This prevents conflicts when multiple devices are on the same network
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+  char macSuffix[5];
+  sprintf(macSuffix, "%02X%02X", mac[4], mac[5]);
+
+  ap_ssid_unique = String(AP_SSID) + "_" + String(macSuffix);
+  mdns_hostname_unique = String("esp32-monitor-") + String(macSuffix);
+  mdns_hostname_unique.toLowerCase(); // mDNS hostnames should be lowercase
+
   // Initialize watchdog timer to prevent system freezes
   // If the system freezes for more than 10 seconds, it will auto-reset
   esp_task_wdt_init(WDT_TIMEOUT, true);  // 10 sec timeout, panic on timeout
   esp_task_wdt_add(NULL);  // Add current thread to watchdog
   Serial.println("✓ Watchdog timer enabled (10s timeout)");
 
-  // POWER SAVING: Reduce CPU frequency to 80 MHz (minimum for WiFi operation)
-  // This reduces power consumption by ~30-40% while maintaining WiFi functionality
-  // 160 MHz → 80 MHz saves approximately 20-30 mA
-  setCpuFrequencyMhz(80);
-  Serial.println("✓ CPU Frequency reduced to 80 MHz for power saving");
+  // POWER SAVING: Set CPU frequency from board config
+  // ESP32-C3: 80 MHz for power saving (~30-40% reduction)
+  // ESP32 WROOM: 160 MHz for standard performance (or 240 MHz max)
+  setCpuFrequencyMhz(CPU_FREQ_MHZ);
+  Serial.print("✓ CPU Frequency set to ");
+  Serial.print(CPU_FREQ_MHZ);
+  Serial.println(" MHz");
 
-  // Setup LED pin (ESP32-C3 Super Mini LED is active-LOW: HIGH=off, LOW=on)
-  // CRITICAL: Start with GPIO8 HIGH to ensure safe boot mode on next power cycle
+  // Setup LED pin (board-specific, see board_config.h)
   pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, HIGH);  // Start with GPIO8 HIGH (LED off on active-low LED)
+  LED_OFF();  // Start with LED off
 
   // Give sensors time to power up and stabilize after CPU frequency change
   delay(500);
@@ -168,8 +160,11 @@ void setup() {
   setupAHT20();
 
   Serial.println("\n=================================");
-  Serial.println("ESP32-C3 Super Mini - Monitor");
+  Serial.print(BOARD_FULL_NAME);
+  Serial.println(" - Monitor");
   Serial.println("=================================");
+  Serial.print("Board: ");
+  Serial.println(BOARD_NAME);
   Serial.print("Chip Model: ");
   Serial.println(ESP.getChipModel());
   Serial.print("Chip Revision: ");
@@ -180,6 +175,8 @@ void setup() {
   Serial.print("Free Heap: ");
   Serial.print(ESP.getFreeHeap() / 1024);
   Serial.println(" KB");
+  Serial.print("Note: ");
+  Serial.println(BOARD_NOTES);
   Serial.println("=================================\n");
 
   // Initialize NVS
@@ -227,9 +224,12 @@ void setup() {
   // Print connection info
   Serial.println("\n========== CONNECTION INFO ==========");
   Serial.println("To connect:");
-  Serial.println("1. Connect to WiFi: " + String(ap_ssid));
+  Serial.println("1. Connect to WiFi: " + ap_ssid_unique);
   Serial.println("2. Password: " + String(ap_password));
   Serial.println("3. Open browser to: http://192.168.4.1");
+  Serial.print("   or: http://");
+  Serial.print(mdns_hostname_unique);
+  Serial.println(".local");
   Serial.println("=====================================\n");
 
   if (sta_connected) {
@@ -296,7 +296,7 @@ void loop() {
     checkWiFiRoaming();
   }
 
-  // LED control logic (INVERTED: ESP32-C3 Super Mini LED is active-LOW)
+  // LED control logic (uses LED_ON()/LED_OFF() macros from board_config.h)
   unsigned long currentMillis = millis();
 
   if (otaInProgress) {
@@ -304,14 +304,14 @@ void loop() {
     if (currentMillis - lastLedBlink >= 50) {
       lastLedBlink = currentMillis;
       ledState = !ledState;
-      digitalWrite(LED_PIN, ledState ? LOW : HIGH);  // Inverted: LOW=on, HIGH=off
+      if (ledState) { LED_ON(); } else { LED_OFF(); }
     }
   } else if (otaPrepared) {
     // OTA prepared: Fast blinking (100ms interval) - ready for upload!
     if (currentMillis - lastLedBlink >= 100) {
       lastLedBlink = currentMillis;
       ledState = !ledState;
-      digitalWrite(LED_PIN, ledState ? LOW : HIGH);  // Inverted: LOW=on, HIGH=off
+      if (ledState) { LED_ON(); } else { LED_OFF(); }
     }
   } else if (sta_connected) {
     // Connected to WiFi: Heartbeat pattern (♥ lub-dub ... pause ... ♥ lub-dub)
@@ -321,9 +321,9 @@ void loop() {
       // Steps: ON(100ms)-OFF(100ms)-ON(100ms)-OFF(1500ms)-loop
       // Pattern: Brief "lub-dub" pulses (200ms ON) with long dark pauses (1600ms OFF)
       if (heartbeatStep == 0 || heartbeatStep == 2) {
-        digitalWrite(LED_PIN, LOW);   // LED ON for "lub" and "dub" beats
+        LED_ON();   // LED ON for "lub" and "dub" beats
       } else {
-        digitalWrite(LED_PIN, HIGH);  // LED OFF for pauses (steps 1 and 3)
+        LED_OFF();  // LED OFF for pauses (steps 1 and 3)
       }
 
       heartbeatStep = (heartbeatStep + 1) % 4;  // Cycle through 4 steps
@@ -333,7 +333,7 @@ void loop() {
     if (currentMillis - lastLedBlink >= 500) {
       lastLedBlink = currentMillis;
       ledState = !ledState;
-      digitalWrite(LED_PIN, ledState ? LOW : HIGH);  // Inverted: LOW=on, HIGH=off
+      if (ledState) { LED_ON(); } else { LED_OFF(); }
     }
   }
 }
@@ -349,10 +349,10 @@ void setupAccessPoint() {
   WiFi.mode(WIFI_AP_STA);
   delay(100);
 
-  // Configure Access Point
+  // Configure Access Point with unique SSID
   // Channel 1, Hidden=false, Max connections=4
   // Using channel 1 for maximum compatibility with Mac/iPhone
-  bool result = WiFi.softAP(ap_ssid, ap_password, 1, 0, 4);
+  bool result = WiFi.softAP(ap_ssid_unique.c_str(), ap_password, 1, 0, 4);
 
   if (result) {
     Serial.println("✓ Access Point created successfully!");
@@ -360,11 +360,15 @@ void setupAccessPoint() {
     Serial.println("✗ Failed to create Access Point!");
   }
 
-  // CRITICAL FIX for ESP32-C3 Super Mini:
-  // Reduce WiFi TX power to 8.5dBm due to hardware power supply limitations
-  // This MUST be called AFTER WiFi.softAP()
-  WiFi.setTxPower(WIFI_POWER_8_5dBm);
-  Serial.println("✓ WiFi TX Power set to 8.5dBm (ESP32-C3 hardware limitation)");
+  // Set WiFi TX power based on board configuration
+  // ESP32-C3: Must use 8.5dBm due to hardware power supply limitations
+  // ESP32 WROOM: Can use full power (19.5dBm) for maximum range
+  WiFi.setTxPower(WIFI_TX_POWER);
+  #if WIFI_NEEDS_POWER_REDUCTION
+    Serial.println("✓ WiFi TX Power set to 8.5dBm (board hardware limitation)");
+  #else
+    Serial.println("✓ WiFi TX Power set to 19.5dBm (maximum range)");
+  #endif
 
   // POWER SAVING: Enable WiFi Modem Sleep Mode
   // This allows the WiFi radio to sleep between DTIM beacons while maintaining connection
@@ -389,7 +393,7 @@ void setupAccessPoint() {
   IPAddress IP = WiFi.softAPIP();
   Serial.println("\n--- Access Point Details ---");
   Serial.print("SSID: ");
-  Serial.println(ap_ssid);
+  Serial.println(ap_ssid_unique);
   Serial.print("Password: ");
   Serial.println(ap_password);
   Serial.print("IP Address: ");
@@ -400,14 +404,14 @@ void setupAccessPoint() {
 }
 
 void setupOTA() {
-  // Configure OTA hostname
-  ArduinoOTA.setHostname("ESP32-Monitor");
+  // Configure OTA hostname with unique suffix
+  ArduinoOTA.setHostname(mdns_hostname_unique.c_str());
 
-  // Set OTA password for security
-  ArduinoOTA.setPassword("admin");
+  // Set OTA password for security (from board_config.h)
+  ArduinoOTA.setPassword(OTA_PASSWORD);
 
-  // Port defaults to 3232
-  ArduinoOTA.setPort(3232);
+  // Port defaults to 3232 (from board_config.h)
+  ArduinoOTA.setPort(OTA_PORT);
 
   ArduinoOTA.onStart([]() {
     String type;
@@ -468,12 +472,13 @@ void setupOTA() {
     // Clear OTA prep flag (power save will be re-enabled after reboot)
     otaPrepared = false;
 
-    // CRITICAL: Set GPIO8 HIGH before reboot to ensure safe boot mode
-    // This prevents boot failures caused by GPIO8=LOW during power-up
-    digitalWrite(LED_PIN, HIGH);  // HIGH = safe boot state for GPIO8 strapping pin
+    // Ensure LED is off before reboot (sets pin to safe boot state)
+    // For ESP32-C3: LED_OFF() sets GPIO8 HIGH, which is critical for safe boot
+    // See board_config.h for detailed GPIO8 strapping pin documentation
+    LED_OFF();
     delay(100);  // Allow pin state to stabilize
 
-    Serial.println("✓ GPIO8 set HIGH for safe reboot");
+    Serial.println("✓ LED pin set to safe state for reboot");
     Serial.println("Rebooting...");
   });
 
@@ -507,12 +512,15 @@ void setupOTA() {
   ArduinoOTA.begin();
 
   Serial.println("\n--- OTA Update Enabled ---");
-  Serial.println("Hostname: ESP32-Monitor");
+  Serial.print("Hostname: ");
+  Serial.println(mdns_hostname_unique);
   Serial.println("IP Address: " + WiFi.localIP().toString());
   Serial.println("Port: 3232");
   Serial.println("Password: admin");
   Serial.println("\nTo upload via OTA:");
   Serial.println("pio run -t upload --upload-port " + WiFi.localIP().toString());
+  Serial.print("  or: pio run -t upload --upload-port ");
+  Serial.println(mdns_hostname_unique + ".local");
   Serial.println("--- OTA Ready ---\n");
 }
 
@@ -524,14 +532,14 @@ void setupMDNS() {
   MDNS.end();
   delay(100);  // Give time for cleanup
 
-  // Start mDNS service with retry logic
+  // Start mDNS service with retry logic using unique hostname
   bool success = false;
   for (int attempt = 1; attempt <= 3; attempt++) {
     Serial.print("mDNS attempt ");
     Serial.print(attempt);
     Serial.print("/3... ");
 
-    if (MDNS.begin("esp32-monitor")) {
+    if (MDNS.begin(mdns_hostname_unique.c_str())) {
       success = true;
       Serial.println("SUCCESS!");
       break;
@@ -548,8 +556,12 @@ void setupMDNS() {
     MDNS.addService("http", "tcp", 80);
 
     Serial.println("\n✓ mDNS Ready!");
-    Serial.println("Hostname: esp32-monitor.local");
-    Serial.println("Access via: http://esp32-monitor.local");
+    Serial.print("Hostname: ");
+    Serial.print(mdns_hostname_unique);
+    Serial.println(".local");
+    Serial.print("Access via: http://");
+    Serial.print(mdns_hostname_unique);
+    Serial.println(".local");
     Serial.println("--- mDNS Initialized ---\n");
   } else {
     Serial.println("\n✗ mDNS failed after 3 attempts");
@@ -587,9 +599,9 @@ void connectToWiFi() {
 
   WiFi.begin(sta_ssid.c_str(), sta_password.c_str());
 
-  // CRITICAL FIX for ESP32-C3 Super Mini:
   // Set TX power after WiFi.begin() for station mode
-  WiFi.setTxPower(WIFI_POWER_8_5dBm);
+  // Power level is board-specific (see board_config.h)
+  WiFi.setTxPower(WIFI_TX_POWER);
 
   // POWER SAVING: Enable WiFi Modem Sleep for station mode
   // BUT: Don't enable if OTA is prepared or in progress!
@@ -762,20 +774,21 @@ void setupBMP280() {
   // Give I2C bus time to initialize
   delay(100);
 
-  Serial.print("Attempting to initialize BMP280 at address 0x");
-  Serial.println(BMP280_ADDRESS, HEX);
+  Serial.println("Attempting to initialize BMP280 at address 0x76...");
 
-  // Try to initialize the sensor
-  if (!bmp.begin(BMP280_ADDRESS)) {
-    Serial.println("✗ Could not find BMP280 sensor!");
+  // Try to initialize the sensor at 0x76 (common address)
+  if (!bmp.begin(0x76)) {
+    Serial.println("✗ Could not find BMP280 sensor at 0x76!");
     Serial.println("  Check wiring:");
     Serial.println("  - VCC to 3V3");
     Serial.println("  - GND to GND");
-    Serial.println("  - SDA to GPIO6");
-    Serial.println("  - SCL to GPIO7");
+    Serial.print("  - SDA to GPIO");
+    Serial.println(I2C_SDA);
+    Serial.print("  - SCL to GPIO");
+    Serial.println(I2C_SCL);
     Serial.println("  Trying alternate address 0x77...");
 
-    // Try alternate I2C address
+    // Try alternate I2C address (library default)
     if (!bmp.begin(0x77)) {
       Serial.println("✗ BMP280 not found at 0x77 either!");
       Serial.println("--- BMP280 Setup Failed ---\n");
@@ -840,8 +853,10 @@ void setupAHT20() {
     Serial.println("  Check wiring (same as BMP280):");
     Serial.println("  - VCC to 3V3");
     Serial.println("  - GND to GND");
-    Serial.println("  - SDA to GPIO6");
-    Serial.println("  - SCL to GPIO7");
+    Serial.print("  - SDA to GPIO");
+    Serial.println(I2C_SDA);
+    Serial.print("  - SCL to GPIO");
+    Serial.println(I2C_SCL);
     Serial.println("--- AHT20 Setup Failed ---\n");
     ahtAvailable = false;
     return;
@@ -989,6 +1004,10 @@ void handleStatus() {
 
   // Firmware version
   json += "\"firmwareVersion\":\"" + String(FIRMWARE_VERSION) + "\",";
+
+  // Device identification
+  json += "\"apSSID\":\"" + ap_ssid_unique + "\",";
+  json += "\"mdnsHostname\":\"" + mdns_hostname_unique + "\",";
 
   // System statistics
   json += "\"uptime\":\"" + getUptime() + "\",";
