@@ -7,7 +7,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ESP32-C3 Monitor</title>
+    <title>ESP32 Monitor</title>
     <script src="https://unpkg.com/lucide@latest" async onerror="console.log('Icons not available (no internet)')"></script>
     <style>
         /* Hide icons gracefully if library doesn't load */
@@ -635,7 +635,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         <div class="header">
             <div class="header-content">
                 <div class="header-title">
-                    <h1>ESP32-C3 Monitor</h1>
+                    <h1>ESP32 Monitor</h1>
                     <p>System Dashboard & WiFi Manager • <span id="firmwareVersion">v?.?.?</span></p>
                 </div>
                 <div class="header-actions">
@@ -737,8 +737,16 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                         <h3 class="card-title">Network Status</h3>
                     </div>
                     <div class="metric-row">
+                        <span class="metric-label">AP SSID</span>
+                        <span class="metric-value" id="apSSID">Loading...</span>
+                    </div>
+                    <div class="metric-row">
                         <span class="metric-label">AP IP</span>
                         <span class="metric-value" id="apIP">Loading...</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">mDNS</span>
+                        <span class="metric-value" id="mdnsHostname">Loading...</span>
                     </div>
                     <div class="metric-row">
                         <span class="metric-label">Status</span>
@@ -836,7 +844,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 </div>
                 <div class="metric-row">
                     <span class="metric-label">Hostname</span>
-                    <span class="metric-value">esp32-monitor.local</span>
+                    <span class="metric-value" id="otaHostname">esp32-monitor.local</span>
                 </div>
                 <div class="metric-row">
                     <span class="metric-label">Device IP</span>
@@ -958,7 +966,9 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     document.getElementById('freeSketchSpace').textContent = freeSketchKB + ' KB (' + freeSketchPercent + '%)';
 
                     // Network info
+                    document.getElementById('apSSID').textContent = data.apSSID || 'ESP32-Monitor';
                     document.getElementById('apIP').textContent = data.apIP;
+                    document.getElementById('mdnsHostname').textContent = (data.mdnsHostname || 'esp32-monitor') + '.local';
 
                     // Environmental sensors data
                     const bmpConnected = data.bmpAvailable;
@@ -1053,6 +1063,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                         document.getElementById('staRSSI').textContent = data.staRSSI + ' dBm';
 
                         // OTA info
+                        document.getElementById('otaHostname').textContent = (data.mdnsHostname || 'esp32-monitor') + '.local';
                         document.getElementById('otaIP').textContent = data.staIP;
                         document.getElementById('otaIPCommand').textContent = data.staIP;
                     } else {
