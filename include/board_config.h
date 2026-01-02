@@ -104,8 +104,18 @@
 // Common Configuration (applies to all boards)
 // Note: BMP280_ADDRESS is defined in Adafruit_BMP280.h as 0x77
 // We use 0x76 as the primary address and 0x77 as fallback in setupBMP280()
-#define FIRMWARE_VERSION "1.5.0"  // Unique SSID and mDNS hostname based on MAC
+#define FIRMWARE_VERSION "2.0.1"  // Restored heartbeat LED pattern
 #define WDT_TIMEOUT 10  // Watchdog timer timeout in seconds
+
+// Power Management Configuration Type (chip-specific)
+// ESP32-C3 uses esp_pm_config_esp32c3_t, ESP32 uses esp_pm_config_esp32_t
+#if defined(BOARD_ESP32C3)
+    #define PM_CONFIG_TYPE esp_pm_config_esp32c3_t
+#elif defined(BOARD_ESP32_WROOM)
+    #define PM_CONFIG_TYPE esp_pm_config_esp32_t
+#else
+    #define PM_CONFIG_TYPE esp_pm_config_esp32_t  // Default fallback
+#endif
 
 // Common WiFi Settings
 #define AP_SSID "ESP32-Monitor"
