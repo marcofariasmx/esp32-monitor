@@ -1160,7 +1160,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         // Initialize
         theme.init();
         updateStatus();
-        setInterval(updateStatus, 2000);
+        // Update every 10 seconds for battery optimization
+        // When not browsing, ESP32 sleeps ~4+ seconds between 5-second sensor cycles
+        // While browsing, 10-second polling provides good UX with reduced wake-ups
+        setInterval(updateStatus, 10000);
 
         // Initialize Lucide icons (only if library loaded - requires internet)
         if (typeof lucide !== 'undefined') {
