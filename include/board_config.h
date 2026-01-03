@@ -104,7 +104,7 @@
 // Common Configuration (applies to all boards)
 // Note: BMP280_ADDRESS is defined in Adafruit_BMP280.h as 0x77
 // We use 0x76 as the primary address and 0x77 as fallback in setupBMP280()
-#define FIRMWARE_VERSION "2.0.1"  // Restored heartbeat LED pattern
+#define FIRMWARE_VERSION "2.0.2"  // OTA auto-initialization and recovery
 #define WDT_TIMEOUT 10  // Watchdog timer timeout in seconds
 
 // Power Management Configuration Type (chip-specific)
