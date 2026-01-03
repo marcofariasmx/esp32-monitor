@@ -60,8 +60,9 @@ String sta_ssid = "";
 String sta_password = "";
 bool sta_connected = false;
 
-// OTA update flag
+// OTA update flags
 bool otaInProgress = false;
+bool otaInitialized = false;  // Track if OTA has been initialized
 
 // OTA preparation tracking (for disabling WiFi power save temporarily)
 bool otaPrepared = false;
@@ -350,6 +351,7 @@ void loop() {
   // Check WiFi connection status
   if (sta_ssid.length() > 0 && WiFi.status() != WL_CONNECTED && sta_connected) {
     sta_connected = false;
+    otaInitialized = false;  // Mark OTA as uninitialized when WiFi disconnects
     Serial.println("WiFi connection lost!");
   } else if (sta_ssid.length() > 0 && WiFi.status() == WL_CONNECTED && !sta_connected) {
     sta_connected = true;
@@ -357,6 +359,13 @@ void loop() {
     Serial.println("Station IP: " + WiFi.localIP().toString());
     // Setup mDNS and OTA after reconnection
     setupMDNS();
+    setupOTA();
+  }
+
+  // Ensure OTA is always initialized when WiFi is connected
+  // This handles edge cases where OTA might fail to initialize or gets stopped
+  if (sta_connected && !otaInitialized) {
+    Serial.println("OTA not initialized but WiFi connected - initializing now...");
     setupOTA();
   }
 
@@ -542,6 +551,7 @@ void setupOTA() {
   });
 
   ArduinoOTA.begin();
+  otaInitialized = true;  // Mark OTA as successfully initialized
 
   Serial.println("\n--- OTA Update Enabled ---");
   Serial.print("Hostname: ");
@@ -1089,6 +1099,14 @@ void handlePrepareOTA() {
   Serial.println("     PREPARE OTA ENDPOINT CALLED");
   Serial.println("========================================");
 
+  // Check if OTA needs to be initialized
+  bool otaWasInitialized = otaInitialized;
+  if (!otaInitialized && sta_connected) {
+    Serial.println("⚠ OTA not initialized - initializing now...");
+    setupOTA();
+    Serial.println("✓ OTA initialized successfully");
+  }
+
   // Disable WiFi power save for the next 5 minutes
   WiFi.setSleep(false);
   esp_wifi_set_ps(WIFI_PS_NONE);
@@ -1108,6 +1126,8 @@ void handlePrepareOTA() {
   json += "\"status\":\"success\",";
   json += "\"message\":\"OTA preparation complete. WiFi power save disabled for 5 minutes.\",";
   json += "\"otaPrepared\":true,";
+  json += "\"otaInitialized\":" + String(otaInitialized ? "true" : "false") + ",";
+  json += "\"otaWasReinitialized\":" + String(!otaWasInitialized && otaInitialized ? "true" : "false") + ",";
   json += "\"timeout\":300";
   json += "}";
 
