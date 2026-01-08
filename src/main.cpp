@@ -59,6 +59,8 @@ const char* ap_password = AP_PASSWORD;
 String sta_ssid = "";
 String sta_password = "";
 bool sta_connected = false;
+bool disableAPWhenConnected = false;  // Setting to disable AP when connected to router
+bool apCurrentlyEnabled = true;  // Track current AP state
 
 // OTA update flags
 bool otaInProgress = false;
@@ -116,6 +118,10 @@ void handleScan();
 void handleConnect();
 void handleStatus();
 void handlePrepareOTA();
+void handleGetAPSettings();
+void handleSetAPSettings();
+void enableAP();
+void disableAP();
 String getUptime();
 float getTemperature();
 String getHTMLPage();
@@ -214,6 +220,11 @@ void setup() {
   if (sta_connected) {
     setupMDNS();  // Reinitialize for dual-interface operation
     setupOTA();
+
+    // Disable AP if the setting is enabled
+    if (disableAPWhenConnected && apCurrentlyEnabled) {
+      disableAP();
+    }
   }
 
   // Setup web server routes
@@ -222,6 +233,8 @@ void setup() {
   server.on("/connect", handleConnect);
   server.on("/status", handleStatus);
   server.on("/prepare-ota", handlePrepareOTA);
+  server.on("/get-ap-settings", handleGetAPSettings);
+  server.on("/set-ap-settings", handleSetAPSettings);
 
   // Start web server
   server.begin();
@@ -353,6 +366,11 @@ void loop() {
     sta_connected = false;
     otaInitialized = false;  // Mark OTA as uninitialized when WiFi disconnects
     Serial.println("WiFi connection lost!");
+
+    // Re-enable AP if it was disabled due to the "disable AP when connected" setting
+    if (disableAPWhenConnected && !apCurrentlyEnabled) {
+      enableAP();
+    }
   } else if (sta_ssid.length() > 0 && WiFi.status() == WL_CONNECTED && !sta_connected) {
     sta_connected = true;
     Serial.println("WiFi reconnected!");
@@ -360,6 +378,11 @@ void loop() {
     // Setup mDNS and OTA after reconnection
     setupMDNS();
     setupOTA();
+
+    // Disable AP if the setting is enabled
+    if (disableAPWhenConnected && apCurrentlyEnabled) {
+      disableAP();
+    }
   }
 
   // Ensure OTA is always initialized when WiFi is connected
@@ -615,10 +638,12 @@ void setupMDNS() {
 void loadWiFiCredentials() {
   sta_ssid = preferences.getString("ssid", "");
   sta_password = preferences.getString("password", "");
+  disableAPWhenConnected = preferences.getBool("disableAP", false);
 
   if (sta_ssid.length() > 0) {
     Serial.println("Loaded WiFi credentials from NVS");
     Serial.println("SSID: " + sta_ssid);
+    Serial.println("Disable AP when connected: " + String(disableAPWhenConnected ? "Yes" : "No"));
   } else {
     Serial.println("No saved WiFi credentials found");
   }
@@ -1132,6 +1157,100 @@ void handlePrepareOTA() {
   json += "}";
 
   server.send(200, "application/json", json);
+}
+
+void handleGetAPSettings() {
+  String json = "{";
+  json += "\"disableAPWhenConnected\":" + String(disableAPWhenConnected ? "true" : "false") + ",";
+  json += "\"apCurrentlyEnabled\":" + String(apCurrentlyEnabled ? "true" : "false");
+  json += "}";
+
+  server.send(200, "application/json", json);
+}
+
+void handleSetAPSettings() {
+  if (server.hasArg("disableAP")) {
+    String value = server.arg("disableAP");
+    disableAPWhenConnected = (value == "true" || value == "1");
+
+    // Save the setting to NVS
+    preferences.putBool("disableAP", disableAPWhenConnected);
+
+    Serial.println("\n--- AP Settings Updated ---");
+    Serial.print("Disable AP when connected: ");
+    Serial.println(disableAPWhenConnected ? "Yes" : "No");
+
+    // Apply the setting immediately if connected to WiFi
+    if (sta_connected) {
+      if (disableAPWhenConnected && apCurrentlyEnabled) {
+        disableAP();
+      } else if (!disableAPWhenConnected && !apCurrentlyEnabled) {
+        enableAP();
+      }
+    }
+
+    String json = "{";
+    json += "\"status\":\"success\",";
+    json += "\"disableAPWhenConnected\":" + String(disableAPWhenConnected ? "true" : "false") + ",";
+    json += "\"apCurrentlyEnabled\":" + String(apCurrentlyEnabled ? "true" : "false");
+    json += "}";
+
+    server.send(200, "application/json", json);
+    Serial.println("--- Settings Saved ---\n");
+  } else {
+    server.send(400, "text/plain", "Missing disableAP parameter");
+  }
+}
+
+void enableAP() {
+  if (apCurrentlyEnabled) {
+    return;  // Already enabled
+  }
+
+  Serial.println("\n--- Enabling Access Point ---");
+
+  // Re-enable AP mode
+  WiFi.mode(WIFI_AP_STA);
+  delay(100);
+
+  // Reconfigure the AP
+  bool result = WiFi.softAP(ap_ssid_unique.c_str(), ap_password, 1, 0, 4);
+
+  if (result) {
+    Serial.println("✓ Access Point re-enabled successfully!");
+    apCurrentlyEnabled = true;
+  } else {
+    Serial.println("✗ Failed to re-enable Access Point!");
+  }
+
+  // Restore WiFi TX power
+  WiFi.setTxPower(WIFI_TX_POWER);
+
+  Serial.print("AP SSID: ");
+  Serial.println(ap_ssid_unique);
+  Serial.print("AP IP: ");
+  Serial.println(WiFi.softAPIP());
+  Serial.println("--- AP Enabled ---\n");
+}
+
+void disableAP() {
+  if (!apCurrentlyEnabled) {
+    return;  // Already disabled
+  }
+
+  Serial.println("\n--- Disabling Access Point ---");
+  Serial.println("Switching to Station-only mode...");
+
+  // Switch to STA-only mode (this stops the AP)
+  WiFi.mode(WIFI_STA);
+  delay(100);
+
+  apCurrentlyEnabled = false;
+
+  Serial.println("✓ Access Point disabled");
+  Serial.println("✓ ESP32 WiFi network is no longer broadcasting");
+  Serial.println("Device is now only connected to: " + sta_ssid);
+  Serial.println("--- AP Disabled ---\n");
 }
 
 String getHTMLPage() {
