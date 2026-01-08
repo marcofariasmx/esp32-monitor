@@ -606,6 +606,61 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             color: #f3f4f6;
         }
 
+        /* Toggle Switch */
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 48px;
+            height: 26px;
+            flex-shrink: 0;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #cbd5e1;
+            transition: 0.3s;
+            border-radius: 26px;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 20px;
+            width: 20px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: 0.3s;
+            border-radius: 50%;
+        }
+
+        input:checked + .toggle-slider {
+            background-color: #2563eb;
+        }
+
+        input:checked + .toggle-slider:before {
+            transform: translateX(22px);
+        }
+
+        body.dark-mode .toggle-slider {
+            background-color: #4b5563;
+        }
+
+        body.dark-mode input:checked + .toggle-slider {
+            background-color: #3b82f6;
+        }
+
         @media (max-width: 768px) {
             .container {
                 padding: 16px;
@@ -813,6 +868,30 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         </div>
 
         <div id="wifi" class="tab-content">
+            <div class="card" id="apSettingsCard" style="display: none;">
+                <div class="card-header">
+                    <div class="card-icon">
+                        <i data-lucide="settings" style="width:20px;height:20px"></i>
+                    </div>
+                    <h3 class="card-title">Access Point Settings</h3>
+                </div>
+                <div style="padding: 16px 0;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; padding: 12px 0;">
+                        <div style="flex: 1;">
+                            <div style="font-weight: 500; margin-bottom: 4px;">Hide ESP32 WiFi Network</div>
+                            <div style="font-size: 13px; color: #6b7280;">
+                                When connected to your router, stop broadcasting the ESP32's WiFi network. The network will automatically re-enable if the connection is lost.
+                            </div>
+                        </div>
+                        <label class="toggle-switch" style="margin-left: 16px;">
+                            <input type="checkbox" id="disableAPToggle" onchange="toggleAPSetting()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div id="apStatus" style="margin-top: 12px; padding: 12px; border-radius: 8px; font-size: 13px; display: none;"></div>
+                </div>
+            </div>
+
             <div class="card">
                 <div class="card-header">
                     <div class="card-icon">
@@ -1150,6 +1229,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     alert(data);
                     closeModal();
                     setTimeout(updateStatus, 3000);
+                    setTimeout(loadAPSettings, 3000);
                 })
                 .catch(error => {
                     alert('Error connecting to network');
@@ -1157,13 +1237,109 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 });
         }
 
+        function loadAPSettings() {
+            fetch('/get-ap-settings')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('disableAPToggle').checked = data.disableAPWhenConnected;
+                    updateAPStatus(data.disableAPWhenConnected, data.apCurrentlyEnabled);
+                })
+                .catch(error => console.error('Error loading AP settings:', error));
+        }
+
+        function toggleAPSetting() {
+            const enabled = document.getElementById('disableAPToggle').checked;
+
+            fetch('/set-ap-settings?disableAP=' + enabled)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        updateAPStatus(data.disableAPWhenConnected, data.apCurrentlyEnabled);
+                        showAPStatusMessage('Setting saved successfully!', 'success');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    showAPStatusMessage('Error saving setting', 'error');
+                });
+        }
+
+        function updateAPStatus(disableWhenConnected, apEnabled) {
+            const apSettingsCard = document.getElementById('apSettingsCard');
+            const statusDiv = document.getElementById('apStatus');
+
+            // Only show the settings card when connected to WiFi
+            fetch('/status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.staConnected) {
+                        apSettingsCard.style.display = 'block';
+
+                        if (disableWhenConnected && !apEnabled) {
+                            statusDiv.style.display = 'block';
+                            statusDiv.style.background = '#dbeafe';
+                            statusDiv.style.color = '#1e40af';
+                            statusDiv.innerHTML = '<strong>Status:</strong> ESP32 WiFi network is currently hidden';
+
+                            if (document.body.classList.contains('dark-mode')) {
+                                statusDiv.style.background = '#1e3a5f';
+                                statusDiv.style.color = '#93c5fd';
+                            }
+                        } else if (!disableWhenConnected && apEnabled) {
+                            statusDiv.style.display = 'block';
+                            statusDiv.style.background = '#d1fae5';
+                            statusDiv.style.color = '#065f46';
+                            statusDiv.innerHTML = '<strong>Status:</strong> ESP32 WiFi network is broadcasting';
+
+                            if (document.body.classList.contains('dark-mode')) {
+                                statusDiv.style.background = '#064e3b';
+                                statusDiv.style.color = '#6ee7b7';
+                            }
+                        } else {
+                            statusDiv.style.display = 'none';
+                        }
+                    } else {
+                        apSettingsCard.style.display = 'none';
+                    }
+                });
+        }
+
+        function showAPStatusMessage(message, type) {
+            const statusDiv = document.getElementById('apStatus');
+            statusDiv.style.display = 'block';
+
+            if (type === 'success') {
+                statusDiv.style.background = '#d1fae5';
+                statusDiv.style.color = '#065f46';
+                if (document.body.classList.contains('dark-mode')) {
+                    statusDiv.style.background = '#064e3b';
+                    statusDiv.style.color = '#6ee7b7';
+                }
+            } else {
+                statusDiv.style.background = '#fee2e2';
+                statusDiv.style.color = '#991b1b';
+                if (document.body.classList.contains('dark-mode')) {
+                    statusDiv.style.background = '#7f1d1d';
+                    statusDiv.style.color = '#fca5a5';
+                }
+            }
+
+            statusDiv.textContent = message;
+
+            setTimeout(() => {
+                loadAPSettings();
+            }, 2000);
+        }
+
         // Initialize
         theme.init();
         updateStatus();
+        loadAPSettings();
         // Update every 10 seconds for battery optimization
         // When not browsing, ESP32 sleeps ~4+ seconds between 5-second sensor cycles
         // While browsing, 10-second polling provides good UX with reduced wake-ups
         setInterval(updateStatus, 10000);
+        setInterval(loadAPSettings, 10000);
 
         // Initialize Lucide icons (only if library loaded - requires internet)
         if (typeof lucide !== 'undefined') {
