@@ -64,6 +64,7 @@ bool apCurrentlyEnabled = true;  // Track current AP state
 
 // Device identification
 String deviceName = "Living Room";  // Default device name (e.g., "Living Room", "Bedroom", "Kitchen")
+String macAddress = "";  // Full MAC address string (e.g., "AA:BB:CC:DD:EE:FF")
 
 // OTA update flags
 bool otaInProgress = false;
@@ -144,6 +145,11 @@ void setup() {
   WiFi.macAddress(mac);
   char macSuffix[5];
   sprintf(macSuffix, "%02X%02X", mac[4], mac[5]);
+
+  // Generate full MAC address string for device identification
+  char macStr[18];
+  sprintf(macStr, "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  macAddress = String(macStr);
 
   ap_ssid_unique = String(AP_SSID) + "_" + String(macSuffix);
   mdns_hostname_unique = String("esp32-monitor-") + String(macSuffix);
@@ -1083,6 +1089,7 @@ void handleStatus() {
 
   // Device identification
   json += "\"deviceName\":\"" + deviceName + "\",";
+  json += "\"macAddress\":\"" + macAddress + "\",";
   json += "\"apSSID\":\"" + ap_ssid_unique + "\",";
   json += "\"mdnsHostname\":\"" + mdns_hostname_unique + "\",";
 
