@@ -690,7 +690,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         <div class="header">
             <div class="header-content">
                 <div class="header-title">
-                    <h1>ESP32 Monitor</h1>
+                    <h1><span id="headerDeviceName">ESP32 Monitor</span></h1>
                     <p>System Dashboard & WiFi Manager • <span id="firmwareVersion">v?.?.?</span></p>
                 </div>
                 <div class="header-actions">
@@ -712,6 +712,9 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             </button>
             <button class="tab" onclick="switchTab('wifi')">
                 WiFi Networks
+            </button>
+            <button class="tab" onclick="switchTab('settings')">
+                Settings
             </button>
             <button class="tab" onclick="switchTab('ota')">
                 OTA Updates
@@ -909,6 +912,28 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             </div>
         </div>
 
+        <div id="settings" class="tab-content">
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon">
+                        <i data-lucide="tag" style="width:20px;height:20px"></i>
+                    </div>
+                    <h3 class="card-title">Device Name</h3>
+                </div>
+                <div style="padding: 16px 0;">
+                    <p style="font-size: 14px; color: #6b7280; margin-bottom: 12px;">
+                        Give your device a friendly name (e.g., "Living Room", "Bedroom", "Kitchen").
+                    </p>
+                    <input type="text" id="deviceNameInput" placeholder="e.g., Living Room, Bedroom, Kitchen" maxlength="32" style="margin-bottom: 12px;">
+                    <button class="btn" onclick="saveDeviceName()">
+                        <i data-lucide="save" style="width:16px;height:16px"></i>
+                        Save Device Name
+                    </button>
+                    <div id="deviceNameStatus" style="margin-top: 12px; padding: 12px; border-radius: 8px; font-size: 13px; display: none;"></div>
+                </div>
+            </div>
+        </div>
+
         <div id="ota" class="tab-content">
             <div class="card" id="otaCard">
                 <div class="card-header">
@@ -1010,6 +1035,12 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             fetch('/status')
                 .then(response => response.json())
                 .then(data => {
+                    // Device name
+                    if (data.deviceName) {
+                        document.getElementById('headerDeviceName').textContent = data.deviceName;
+                        document.getElementById('deviceNameInput').value = data.deviceName;
+                    }
+
                     // Firmware version
                     if (data.firmwareVersion) {
                         document.getElementById('firmwareVersion').textContent = 'v' + data.firmwareVersion;
@@ -1329,6 +1360,66 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             setTimeout(() => {
                 loadAPSettings();
             }, 2000);
+        }
+
+        function saveDeviceName() {
+            const newName = document.getElementById('deviceNameInput').value.trim();
+            const statusDiv = document.getElementById('deviceNameStatus');
+
+            if (newName.length === 0) {
+                showDeviceNameStatus('Device name cannot be empty', 'error');
+                return;
+            }
+
+            if (newName.length > 32) {
+                showDeviceNameStatus('Device name too long (max 32 characters)', 'error');
+                return;
+            }
+
+            fetch('/set-device-name?name=' + encodeURIComponent(newName))
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        document.getElementById('headerDeviceName').textContent = data.deviceName;
+                        showDeviceNameStatus('Device name saved successfully!', 'success');
+                        setTimeout(updateStatus, 1000);
+                    } else {
+                        showDeviceNameStatus('Error saving device name', 'error');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    showDeviceNameStatus('Error saving device name', 'error');
+                });
+        }
+
+        function showDeviceNameStatus(message, type) {
+            const statusDiv = document.getElementById('deviceNameStatus');
+            statusDiv.style.display = 'block';
+
+            if (type === 'success') {
+                statusDiv.style.background = '#d1fae5';
+                statusDiv.style.color = '#065f46';
+                if (document.body.classList.contains('dark-mode')) {
+                    statusDiv.style.background = '#064e3b';
+                    statusDiv.style.color = '#6ee7b7';
+                }
+            } else {
+                statusDiv.style.background = '#fee2e2';
+                statusDiv.style.color = '#991b1b';
+                if (document.body.classList.contains('dark-mode')) {
+                    statusDiv.style.background = '#7f1d1d';
+                    statusDiv.style.color = '#fca5a5';
+                }
+            }
+
+            statusDiv.textContent = message;
+
+            if (type === 'success') {
+                setTimeout(() => {
+                    statusDiv.style.display = 'none';
+                }, 3000);
+            }
         }
 
         // Initialize

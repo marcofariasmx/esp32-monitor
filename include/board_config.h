@@ -104,7 +104,7 @@
 // Common Configuration (applies to all boards)
 // Note: BMP280_ADDRESS is defined in Adafruit_BMP280.h as 0x77
 // We use 0x76 as the primary address and 0x77 as fallback in setupBMP280()
-#define FIRMWARE_VERSION "2.1.0"  // AP disable feature - hide ESP32 WiFi when connected to router
+#define FIRMWARE_VERSION "2.2.0"  // Device naming feature - customize device name in webapp
 #define WDT_TIMEOUT 10  // Watchdog timer timeout in seconds
 
 // Power Management Configuration Type (chip-specific)
