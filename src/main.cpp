@@ -62,6 +62,9 @@ bool sta_connected = false;
 bool disableAPWhenConnected = false;  // Setting to disable AP when connected to router
 bool apCurrentlyEnabled = true;  // Track current AP state
 
+// Device identification
+String deviceName = "Living Room";  // Default device name (e.g., "Living Room", "Bedroom", "Kitchen")
+
 // OTA update flags
 bool otaInProgress = false;
 bool otaInitialized = false;  // Track if OTA has been initialized
@@ -120,6 +123,8 @@ void handleStatus();
 void handlePrepareOTA();
 void handleGetAPSettings();
 void handleSetAPSettings();
+void handleGetDeviceName();
+void handleSetDeviceName();
 void enableAP();
 void disableAP();
 String getUptime();
@@ -235,6 +240,8 @@ void setup() {
   server.on("/prepare-ota", handlePrepareOTA);
   server.on("/get-ap-settings", handleGetAPSettings);
   server.on("/set-ap-settings", handleSetAPSettings);
+  server.on("/get-device-name", handleGetDeviceName);
+  server.on("/set-device-name", handleSetDeviceName);
 
   // Start web server
   server.begin();
@@ -639,6 +646,7 @@ void loadWiFiCredentials() {
   sta_ssid = preferences.getString("ssid", "");
   sta_password = preferences.getString("password", "");
   disableAPWhenConnected = preferences.getBool("disableAP", false);
+  deviceName = preferences.getString("deviceName", "Living Room");
 
   if (sta_ssid.length() > 0) {
     Serial.println("Loaded WiFi credentials from NVS");
@@ -647,6 +655,7 @@ void loadWiFiCredentials() {
   } else {
     Serial.println("No saved WiFi credentials found");
   }
+  Serial.println("Device Name: " + deviceName);
 }
 
 void saveWiFiCredentials(String ssid, String password) {
@@ -1073,6 +1082,7 @@ void handleStatus() {
   json += "\"firmwareVersion\":\"" + String(FIRMWARE_VERSION) + "\",";
 
   // Device identification
+  json += "\"deviceName\":\"" + deviceName + "\",";
   json += "\"apSSID\":\"" + ap_ssid_unique + "\",";
   json += "\"mdnsHostname\":\"" + mdns_hostname_unique + "\",";
 
@@ -1199,6 +1209,43 @@ void handleSetAPSettings() {
     Serial.println("--- Settings Saved ---\n");
   } else {
     server.send(400, "text/plain", "Missing disableAP parameter");
+  }
+}
+
+void handleGetDeviceName() {
+  String json = "{";
+  json += "\"deviceName\":\"" + deviceName + "\"";
+  json += "}";
+
+  server.send(200, "application/json", json);
+}
+
+void handleSetDeviceName() {
+  if (server.hasArg("name")) {
+    String newName = server.arg("name");
+
+    // Validate name length (1-32 characters)
+    if (newName.length() > 0 && newName.length() <= 32) {
+      deviceName = newName;
+
+      // Save to NVS
+      preferences.putString("deviceName", deviceName);
+
+      Serial.println("\n--- Device Name Updated ---");
+      Serial.println("New name: " + deviceName);
+      Serial.println("--- Name Saved ---\n");
+
+      String json = "{";
+      json += "\"status\":\"success\",";
+      json += "\"deviceName\":\"" + deviceName + "\"";
+      json += "}";
+
+      server.send(200, "application/json", json);
+    } else {
+      server.send(400, "text/plain", "Invalid name length (1-32 characters required)");
+    }
+  } else {
+    server.send(400, "text/plain", "Missing name parameter");
   }
 }
 
